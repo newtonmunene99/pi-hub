@@ -1,0 +1,24 @@
+# Local configuration and runtime data - may contain API keys. Never commit.
+config.json
+history.json
+/config/
+*.json.tmp
+.env
+.env.*
+secrets/
+
+__pycache__/
+*.py[cod]
+.ruff_cache/
+.venv/
+venv/
+.coverage
+htmlcov/
+dist/
+build/
+*.egg-info/
+.DS_Store
+
+# crash dumps
+core
+core.*

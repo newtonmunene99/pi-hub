@@ -1,0 +1,33 @@
+[project]
+name = "pi-hub"
+version = "0.1.0"  # keep in sync with pihub/__init__.py
+description = "A tiny, dependency-free launcher and status dashboard for self-hosted services."
+readme = "README.md"
+license = "MIT"
+requires-python = ">=3.10"
+dependencies = []
+classifiers = [
+  "Programming Language :: Python :: 3",
+  "Environment :: Web Environment",
+  "Topic :: System :: Monitoring",
+]
+
+[project.urls]
+Homepage = "https://github.com/newtonmunene99/pi-hub"
+Issues = "https://github.com/newtonmunene99/pi-hub/issues"
+
+[tool.ruff]
+line-length = 120
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP", "S", "SIM", "RUF"]
+ignore = [
+  "S104",   # binding 0.0.0.0 is intended for a LAN dashboard
+  "S310",   # urllib with configured service URLs is the point of the app
+  "S603", "S607",
+  "RUF001", # unicode arrows/dots in UI strings are intentional
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["S101", "S105", "S106", "S108"]

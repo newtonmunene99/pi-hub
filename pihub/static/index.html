@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="theme-color" content="#161826">
+<meta name="referrer" content="no-referrer">
+<title>pi-hub</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Ccircle cx='8' cy='8' r='5' fill='%239184d9'/%3E%3C/svg%3E">
+<link rel="preload" href="fonts/inter-latin.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="stylesheet" href="app.css">
+</head>
+<body>
+<header class="top">
+  <div class="brand"><i></i><span id="title">pi-hub</span></div>
+  <span class="chip" id="host"></span>
+  <nav class="tabs"><a href="#" id="tab-dash">Dashboard</a><a href="#settings" id="tab-set">Settings</a></nav>
+  <div class="search"><input id="q" type="search" autocomplete="off" placeholder="Jump to service or port…" aria-label="Jump to service or port"></div>
+  <div class="meta"><span>Uptime <b id="uptime">—</b></span><span><i class="dot" id="sumdot"></i><span id="summary">—</span></span></div>
+</header>
+
+<main id="view-dash">
+  <section class="stats" id="stats" aria-label="System stats"></section>
+  <div class="dash">
+    <div class="main">
+      <h2 class="label" id="pinned-label">Pinned</h2>
+      <div class="pinned" id="pinned"></div>
+      <div class="cats" id="cats" role="group" aria-label="Filter by category"></div>
+      <h2 class="label all-label">All services</h2>
+      <div class="grid" id="grid"></div>
+      <div class="empty" id="empty" hidden></div>
+    </div>
+    <aside class="side" id="side" aria-label="Activity"></aside>
+  </div>
+</main>
+
+<main id="view-set" hidden>
+  <section class="settings">
+    <div id="lock" class="lock" hidden>
+      <h1>Settings are locked</h1>
+      <p class="muted">Enter the password set in <code>PIHUB_PASSWORD</code>.</p>
+      <label class="sr" for="pw">Password</label>
+      <input id="pw" type="password" autocomplete="current-password" placeholder="Password">
+      <button class="btn-out btn-fill" id="unlock">Unlock</button>
+      <span class="msg err" id="lockmsg"></span>
+    </div>
+    <div id="editor">
+      <div class="top2">
+        <div><h1>Services</h1><div class="help">Links open on <span class="chip" id="host2"></span> · stats use each service's API key. Use the <b>•••</b> button for kind, host and other options.</div></div>
+        <button class="btn-out" id="add">+ Add service</button>
+      </div>
+      <div id="notices"></div>
+      <div class="tbl">
+        <div class="trow head label"><span></span><span>Name</span><span>Port</span><span>Path</span><span>Category</span><span>API key</span><span>Pin</span><span></span><span></span></div>
+        <div id="rows"></div>
+      </div>
+      <div class="foot"><span class="msg" id="msg"></span><button class="btn-ghost" id="cancel">Cancel</button><button class="btn-out btn-fill" id="save">Save changes</button></div>
+    </div>
+  </section>
+</main>
+
+<div class="backdrop" id="modal" hidden></div>
+<script src="app.js"></script>
+</body>
+</html>

@@ -1,0 +1,63 @@
+name: Bug report
+description: Something isn't working as expected
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting! **Remove API keys, tokens, passwords and anything else private** from logs and config before posting.
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened?
+      description: What did you expect, and what happened instead?
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Add a service with kind "radarr" ...
+        2. Open the dashboard ...
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: pi-hub version
+      description: Shown in the container log on start (`pi-hub 0.1.0 listening on ...`) or the image tag.
+    validations:
+      required: true
+  - type: dropdown
+    id: install
+    attributes:
+      label: How do you run it?
+      options:
+        - Docker (host networking)
+        - Docker (bridge networking)
+        - Python directly
+        - Other
+    validations:
+      required: true
+  - type: input
+    id: platform
+    attributes:
+      label: Hardware / OS
+      placeholder: Raspberry Pi 5, Raspberry Pi OS (Debian 13), 64-bit
+  - type: input
+    id: browser
+    attributes:
+      label: Browser (for UI issues)
+      placeholder: Safari on iOS 19
+  - type: textarea
+    id: config
+    attributes:
+      label: Relevant config (secrets removed)
+      render: json
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs
+      description: "`docker logs pi-hub` output around the problem."
+      render: text

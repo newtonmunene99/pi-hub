@@ -1,0 +1,81 @@
+{
+  "title": "pi-hub",
+  "pollSeconds": 15,
+  "categories": ["Media", "Automation", "Downloads", "System"],
+  "system": {
+    "temperature": true,
+    "fan": { "type": "none" },
+    "disks": [
+      { "name": "media", "path": "/disks/media" }
+    ]
+  },
+  "schedule": [
+    { "name": "Kometa", "at": "03:00", "service": "kometa" }
+  ],
+  "services": [
+    {
+      "name": "Plex",
+      "kind": "plex",
+      "category": "Media",
+      "port": "32400",
+      "linkPath": "/web",
+      "description": "Media server",
+      "pinned": true,
+      "apiKey": "env:PLEX_TOKEN"
+    },
+    {
+      "name": "Kometa",
+      "kind": "kometa",
+      "category": "Media",
+      "description": "Collections & overlays",
+      "log": "/kometa-logs/meta.log"
+    },
+    {
+      "name": "Sonarr",
+      "kind": "sonarr",
+      "category": "Automation",
+      "port": "8989",
+      "description": "TV",
+      "pinned": true,
+      "apiKey": "env:SONARR_API_KEY"
+    },
+    {
+      "name": "Radarr",
+      "kind": "radarr",
+      "category": "Automation",
+      "port": "7878",
+      "description": "Movies",
+      "pinned": true,
+      "apiKey": "env:RADARR_API_KEY"
+    },
+    {
+      "name": "Prowlarr",
+      "kind": "prowlarr",
+      "category": "Automation",
+      "port": "9696",
+      "icon": "Pr",
+      "description": "Indexers",
+      "apiKey": "env:PROWLARR_API_KEY"
+    },
+    {
+      "name": "qBittorrent",
+      "kind": "qbittorrent",
+      "category": "Downloads",
+      "port": "8080",
+      "icon": "q",
+      "description": "Torrents",
+      "username": "admin",
+      "password": "env:QBITTORRENT_PASSWORD"
+    },
+    {
+      "name": "Portainer",
+      "kind": "generic",
+      "category": "System",
+      "host": "192.168.1.20",
+      "scheme": "https",
+      "port": "9443",
+      "icon": "Po",
+      "description": "Docker on another machine"
+    }
+  ]
+}

@@ -1,0 +1,4 @@
+*
+!pihub/
+pihub/**/__pycache__
+!LICENSE

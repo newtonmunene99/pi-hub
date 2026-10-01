@@ -1,0 +1,26 @@
+# Copy to compose.yml, adjust the volumes and environment, then: docker compose up -d
+services:
+  pi-hub:
+    image: ghcr.io/newtonmunene99/pi-hub:latest
+    container_name: pi-hub
+    restart: unless-stopped
+    # Host networking lets pi-hub reach services on 127.0.0.1 and read real host
+    # stats. Without it, set each service's "host" to the machine's LAN IP and
+    # publish the port instead:  ports: ["8000:8000"]
+    network_mode: host
+    environment:
+      - TZ=Etc/UTC                 # your timezone, e.g. Africa/Nairobi
+      - PIHUB_PORT=8000
+      # - PIHUB_PASSWORD=change-me # protect the settings page
+      # - PIHUB_READONLY=1         # or disable editing entirely
+      # API keys referenced from config.json as "env:NAME":
+      - PLEX_TOKEN=${PLEX_TOKEN:-}
+      - SONARR_API_KEY=${SONARR_API_KEY:-}
+      - RADARR_API_KEY=${RADARR_API_KEY:-}
+      - PROWLARR_API_KEY=${PROWLARR_API_KEY:-}
+      - QBITTORRENT_PASSWORD=${QBITTORRENT_PASSWORD:-}
+    volumes:
+      - ./config:/config                       # config.json + history.json
+      - /mnt/media:/disks/media:ro             # one line per disk in "system.disks"
+      - /path/to/kometa/config/logs:/kometa-logs:ro   # only if you use the kometa kind
+      # - /etc/argononed.conf:/argononed.conf:ro      # Argon ONE fan curve

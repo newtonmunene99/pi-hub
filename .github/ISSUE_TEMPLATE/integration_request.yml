@@ -1,0 +1,37 @@
+name: Integration request
+description: Ask for live status support for another app
+labels: ["integration"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Any web app already works as `kind: "generic"` (up/down + response time). Integrations add a useful status line, like "3 queued · 9 wanted".
+  - type: input
+    id: app
+    attributes:
+      label: App
+      placeholder: Jellyfin
+    validations:
+      required: true
+  - type: input
+    id: docs
+    attributes:
+      label: Link to its API docs
+  - type: textarea
+    id: status
+    attributes:
+      label: What should the card show?
+      placeholder: Number of active streams and library size
+    validations:
+      required: true
+  - type: textarea
+    id: sample
+    attributes:
+      label: Sample API response (secrets and personal data removed)
+      render: json
+  - type: checkboxes
+    id: help
+    attributes:
+      label: Contributing
+      options:
+        - label: I'd be willing to write it (see CONTRIBUTING.md → Adding an integration)
