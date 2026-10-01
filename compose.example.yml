@@ -1,7 +1,7 @@
 # Copy to compose.yml, adjust the volumes and environment, then: docker compose up -d
 services:
   pi-hub:
-    image: ghcr.io/newtonmunene99/pi-hub:0.1   # latest 0.1.x; see README → Docker image
+    image: ghcr.io/newtonmunene99/pi-hub:0.2   # latest 0.2.x; see README → Docker image
     container_name: pi-hub
     restart: unless-stopped
     # Host networking lets pi-hub reach services on 127.0.0.1 and read real host

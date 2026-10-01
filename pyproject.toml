@@ -1,6 +1,6 @@
 [project]
 name = "pi-hub"
-version = "0.1.0"  # keep in sync with pihub/__init__.py
+version = "0.2.0"  # keep in sync with pihub/__init__.py
 description = "A tiny, dependency-free launcher and status dashboard for self-hosted services."
 readme = "README.md"
 license = "MIT"
