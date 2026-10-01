@@ -1,5 +1,5 @@
 # syntax=docker/dockerfile:1
-FROM python:3.13-alpine
+FROM python:3.14-alpine
 
 # tzdata so TZ=... gives local times in the schedule and "last run" labels
 RUN apk add --no-cache tzdata \
