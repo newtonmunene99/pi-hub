@@ -10,7 +10,8 @@ import time
 import zlib
 
 from . import config as cfgmod
-from .integrations import KINDS
+from .hub import service_view, settings_view, state_view
+from .integrations import is_scheduled
 from .util import fmt_duration
 
 DEMO_CONFIG = {
@@ -123,87 +124,61 @@ class DemoHub:
 
     def settings(self):
         with self.lock:
-            return {
-                "services": cfgmod.public_services(self.cfg),
-                "categories": self.cfg["categories"],
-                "kinds": {
-                    k: {
-                        "label": v.label,
-                        "needsPort": v.needs_port,
-                        "defaultPort": v.default_port,
-                        "keyHint": v.key_hint,
-                    }
-                    for k, v in KINDS.items()
-                },
-            }
+            return settings_view(self.cfg)
 
     def state(self):
-        from . import schedule
-
         rng = random.Random(int(time.time() // 15))  # noqa: S311 - jitter for fake demo data
         services = []
         for svc in self.cfg["services"]:
             seed = zlib.crc32(svc["id"].encode())
             up = svc["id"] != "netdata"
-            cron = not KINDS[svc["kind"]].needs_port and not svc["port"]
+            cron = is_scheduled(svc)
             ms = 18 + seed % 70
+            bars = [
+                {"ms": None, "state": "down"}
+                if not up and i > 20
+                else {"ms": ms + (seed * (i + 3)) % 40, "state": "up"}
+                for i in range(24)
+            ]
             services.append(
-                {
-                    "id": svc["id"],
-                    "name": svc["name"],
-                    "icon": svc["icon"],
-                    "category": svc["category"],
-                    "kind": svc["kind"],
-                    "description": svc["description"],
-                    "pinned": svc["pinned"],
-                    "scheme": svc["scheme"],
-                    "port": svc["port"],
-                    "linkPath": svc["basePath"] + svc["linkPath"],
-                    "url": svc["url"],
-                    "up": True if cron else up,
-                    "cron": cron,
-                    "state": "Scheduled" if cron else ("Online" if up else "Offline"),
-                    "since": fmt_duration((12 + seed % 30) * 86400 + seed % 80000) if up else "2h 14m",
-                    "ms": None if cron or not up else ms + rng.randint(-4, 4),
-                    "stat": STATS.get(svc["id"], "Online · 12 ms"),
-                    "running": False,
-                    "version": VERSIONS.get(svc["id"]),
-                    "bars": []
-                    if cron
-                    else [
-                        {"ms": None, "state": "down"}
-                        if not up and i > 20
-                        else {"ms": ms + (seed * (i + 3)) % 40, "state": "up"}
-                        for i in range(24)
-                    ],
-                }
+                service_view(
+                    svc,
+                    up=True if cron else up,
+                    state="Scheduled" if cron else ("Online" if up else "Offline"),
+                    since=fmt_duration((12 + seed % 30) * 86400 + seed % 80000) if up else "2h 14m",
+                    ms=None if cron or not up else ms + rng.randint(-4, 4),
+                    stat=STATS.get(svc["id"], "Online · 12 ms"),
+                    running=False,
+                    version=VERSIONS.get(svc["id"]),
+                    bars=[] if cron else bars,
+                )
             )
-        return {
-            "title": self.cfg["title"],
-            "sys": {
-                "uptime": "41d 6h",
-                "cards": [
-                    {
-                        "label": "CPU temp",
-                        "value": f"{52 + rng.randint(-1, 1)}°",
-                        "sub": "Pi 5 · fan 30%",
-                        "pct": 61,
-                        "warn": False,
-                    },
-                    {
-                        "label": "CPU load",
-                        "value": f"{38 + rng.randint(-5, 5)}%",
-                        "sub": "4 cores · 1.20 load",
-                        "pct": 38,
-                        "warn": False,
-                    },
-                    {"label": "Memory", "value": "5.1", "sub": "of 8 GB", "pct": 64, "warn": False},
-                    {"label": "media", "value": "2.7", "sub": "of 4.0 TB · 68%", "pct": 68, "warn": False},
-                ],
-            },
-            "services": services,
-            "categories": self.cfg["categories"],
-            "playing": [
+        sys_stats = {
+            "uptime": "41d 6h",
+            "cards": [
+                {
+                    "label": "CPU temp",
+                    "value": f"{52 + rng.randint(-1, 1)}°",
+                    "sub": "Pi 5 · fan 30%",
+                    "pct": 61,
+                    "warn": False,
+                },
+                {
+                    "label": "CPU load",
+                    "value": f"{38 + rng.randint(-5, 5)}%",
+                    "sub": "4 cores · 1.20 load",
+                    "pct": 38,
+                    "warn": False,
+                },
+                {"label": "Memory", "value": "5.1", "sub": "of 8 GB", "pct": 64, "warn": False},
+                {"label": "media", "value": "2.7", "sub": "of 4.0 TB · 68%", "pct": 68, "warn": False},
+            ],
+        }
+        return state_view(
+            self.cfg,
+            services,
+            sys_stats=sys_stats,
+            playing=[
                 {"title": "Severance S02E04", "who": "Sam", "how": "Direct play", "pct": 42, "state": "playing"},
                 {
                     "title": "Dune: Part Two (2024)",
@@ -213,14 +188,10 @@ class DemoHub:
                     "state": "playing",
                 },
             ],
-            "downloads": {
-                "speed": "18.4 MB/s",
-                "total": 3,
-                "items": [
-                    {"name": "The.Bear.S03E05.1080p", "pct": 84, "src": "qBittorrent"},
-                    {"name": "Anora.2024.2160p.WEB", "pct": 37, "src": "qBittorrent"},
-                    {"name": "Andor.S02E09.1080p", "pct": 12, "src": "SABnzbd"},
-                ],
-            },
-            "schedule": schedule.entries(self.cfg["schedule"]),
-        }
+            downloads=[
+                {"name": "The.Bear.S03E05.1080p", "pct": 84, "src": "qBittorrent"},
+                {"name": "Anora.2024.2160p.WEB", "pct": 37, "src": "qBittorrent"},
+                {"name": "Andor.S02E09.1080p", "pct": 12, "src": "SABnzbd"},
+            ],
+            download_speed=18_400_000,
+        )

@@ -8,7 +8,7 @@ from concurrent.futures import ThreadPoolExecutor
 
 from . import config as cfgmod
 from . import schedule, system
-from .integrations import KINDS, Client, Context
+from .integrations import KINDS, Client, Report, is_scheduled, kinds_info
 from .util import fmt_duration, fmt_speed
 
 INFO_REFRESH_SECONDS = 600
@@ -120,30 +120,31 @@ class Hub:
             self.clients[svc["id"]] = cached
         return cached[1]
 
-    def poll_service(self, svc, ctx):
+    def poll_service(self, svc):
+        """Check one service. Runs in a worker thread; returns, never mutates shared state."""
         integ = KINDS[svc["kind"]]
-        if not integ.needs_port and not svc.get("port"):
-            stat, running = integ.read(svc) if hasattr(integ, "read") else ("", False)
-            return {"up": True, "cron": True, "ms": None, "stat": stat, "running": running}
+        if is_scheduled(svc):
+            stat, running = integ.local_status(svc) or ("", False)
+            return {"up": True, "cron": True, "ms": None, "stat": stat, "running": running, "report": Report()}
         client = self.client(svc)
         status, _, ms = client.request(integ.probe_path)
         up = status is not None
-        stat = None
+        report = Report()
         if up:
             try:
-                stat = integ.stats(client, ctx)
+                result = integ.stats(client, self.info_cache.get(svc["id"]))
             except Exception as e:  # an integration bug must not break the poll
                 print(f"{svc['name']}: stats failed: {e!r}", flush=True)
-        if stat is None:
-            stat = f"Online · {ms:.0f} ms" if up else "Not responding"
-        return {"up": up, "cron": False, "ms": ms, "stat": stat}
+            else:
+                report = result if isinstance(result, Report) else Report(status=result)
+        stat = report.status or (f"Online · {ms:.0f} ms" if up else "Not responding")
+        return {"up": up, "cron": False, "ms": ms, "stat": stat, "report": report}
 
     def refresh_info(self, services):
         stale = [
             s
             for s in services
-            if KINDS[s["kind"]].needs_port
-            and s.get("port")
+            if not is_scheduled(s)
             and time.time() - self.info_cache.get(s["id"], {}).get("at", 0) > INFO_REFRESH_SECONDS
         ]
 
@@ -161,10 +162,10 @@ class Hub:
             services = list(self.cfg["services"])
             system_cfg = self.cfg["system"]
         self.refresh_info(services)
-        ctx = Context()
-        ctx.cache = self.info_cache
-        results = list(self.pool.map(lambda s: self.poll_service(s, ctx), services))
+        results = list(self.pool.map(self.poll_service, services))
         sys_stats = system.collect(system_cfg, self.cpu)
+        # Merge sidebar data here, in one thread, after all workers finished.
+        reports = [r.pop("report") for r in results]
         with self.lock:
             self.results = {}
             for svc, r in zip(services, results, strict=True):
@@ -172,9 +173,9 @@ class Hub:
                     self.history.record(svc["id"], r["up"], r["ms"])
                 self.results[svc["id"]] = r
             self.sys = sys_stats
-            self.playing = ctx.playing
-            self.downloads = sorted(ctx.downloads, key=lambda d: -d["pct"])
-            self.download_speed = ctx.download_speed
+            self.playing = [item for rep in reports for item in rep.playing]
+            self.downloads = sorted((d for rep in reports for d in rep.downloads), key=lambda d: -d["pct"])
+            self.download_speed = sum(rep.download_speed for rep in reports)
 
     def run_forever(self):
         last_save = time.time()
@@ -199,9 +200,7 @@ class Hub:
             services = []
             for svc in cfg["services"]:
                 r = self.results.get(svc["id"])
-                integ = KINDS[svc["kind"]]
-                cron = not integ.needs_port and not svc.get("port")
-                if cron:
+                if is_scheduled(svc):
                     state, since = "Scheduled", None
                 elif r is None:
                     state, since = "Checking", None
@@ -209,58 +208,71 @@ class Hub:
                     state = "Online" if r["up"] else "Offline"
                     since = self.history.since(svc["id"], now)
                 services.append(
-                    {
-                        "id": svc["id"],
-                        "name": svc["name"],
-                        "icon": svc["icon"],
-                        "category": svc["category"],
-                        "kind": svc["kind"],
-                        "description": svc["description"],
-                        "pinned": svc["pinned"],
-                        "scheme": svc["scheme"],
-                        "port": svc["port"],
-                        "linkPath": svc["basePath"] + svc["linkPath"],
-                        "url": svc["url"],
-                        "up": r["up"] if r else None,
-                        "cron": cron,
-                        "state": state,
-                        "since": since,
-                        "ms": round(r["ms"]) if r and r.get("ms") is not None else None,
-                        "stat": r["stat"] if r else "Checking…",
-                        "running": bool(r and r.get("running")),
-                        "version": self.info_cache.get(svc["id"], {}).get("version"),
-                        "bars": [] if cron else self.history.bars(svc["id"], now),
-                    }
+                    service_view(
+                        svc,
+                        up=r["up"] if r else None,
+                        state=state,
+                        since=since,
+                        ms=round(r["ms"]) if r and r.get("ms") is not None else None,
+                        stat=r["stat"] if r else "Checking…",
+                        running=bool(r and r.get("running")),
+                        version=self.info_cache.get(svc["id"], {}).get("version"),
+                        bars=[] if is_scheduled(svc) else self.history.bars(svc["id"], now),
+                    )
                 )
-            kinds = {s["kind"] for s in cfg["services"]}
-            return {
-                "title": cfg["title"],
-                "sys": self.sys,
-                "services": services,
-                "categories": cfg["categories"],
-                "playing": list(self.playing) if "plex" in kinds else None,
-                "downloads": {
-                    "speed": fmt_speed(self.download_speed),
-                    "items": self.downloads[:4],
-                    "total": len(self.downloads),
-                }
-                if kinds & {"qbittorrent", "sabnzbd"}
-                else None,
-                "schedule": schedule.entries(cfg["schedule"]),
-            }
+            return state_view(
+                cfg,
+                services,
+                sys_stats=self.sys,
+                playing=list(self.playing),
+                downloads=self.downloads,
+                download_speed=self.download_speed,
+            )
 
     def settings(self):
         with self.lock:
-            return {
-                "services": cfgmod.public_services(self.cfg),
-                "categories": self.cfg["categories"],
-                "kinds": {
-                    k: {
-                        "label": v.label,
-                        "needsPort": v.needs_port,
-                        "defaultPort": v.default_port,
-                        "keyHint": v.key_hint,
-                    }
-                    for k, v in KINDS.items()
-                },
-            }
+            return settings_view(self.cfg)
+
+
+def service_view(svc, **live):
+    """One service as the dashboard sees it: config fields plus ``live`` status fields."""
+    return {
+        "id": svc["id"],
+        "name": svc["name"],
+        "icon": svc["icon"],
+        "category": svc["category"],
+        "kind": svc["kind"],
+        "description": svc["description"],
+        "pinned": svc["pinned"],
+        "scheme": svc["scheme"],
+        "port": svc["port"],
+        "linkPath": svc["basePath"] + svc["linkPath"],
+        "url": svc["url"],
+        "cron": is_scheduled(svc),
+        **live,
+    }
+
+
+def state_view(cfg, services, *, sys_stats, playing, downloads, download_speed):
+    """The /api/state document. Sidebar sections are None when no service provides them."""
+    provided = set().union(*(KINDS[s["kind"]].provides for s in cfg["services"]))
+    return {
+        "title": cfg["title"],
+        "sys": sys_stats,
+        "services": services,
+        "categories": cfg["categories"],
+        "playing": playing if "playing" in provided else None,
+        "downloads": {"speed": fmt_speed(download_speed), "items": downloads[:4], "total": len(downloads)}
+        if "downloads" in provided
+        else None,
+        "schedule": schedule.entries(cfg["schedule"]),
+    }
+
+
+def settings_view(cfg):
+    """The /api/config document: services with secrets masked, plus kind metadata."""
+    return {
+        "services": cfgmod.public_services(cfg),
+        "categories": cfg["categories"],
+        "kinds": kinds_info(),
+    }

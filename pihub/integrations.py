@@ -7,6 +7,10 @@ web app: it only checks that the port answers.
 
 Adding an integration: subclass ``Integration``, implement ``stats`` and/or
 ``info``, and register it in ``KINDS`` at the bottom. See CONTRIBUTING.md.
+
+Integrations never share mutable state: ``stats`` runs in a worker thread per
+service and *returns* everything it found (a ``Report``); the hub merges the
+reports afterwards.
 """
 
 import http.cookiejar
@@ -17,6 +21,7 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 
 from .util import day_label, fmt_speed, plural
@@ -62,14 +67,19 @@ class Client:
             return None
 
 
-class Context:
-    """Data collected across services during one poll (sidebar content)."""
+@dataclass
+class Report:
+    """What one service contributed during a poll.
 
-    def __init__(self):
-        self.playing = []
-        self.download_speed = 0.0
-        self.downloads = []
-        self.cache = {}  # service id -> last ``info`` result
+    ``status`` is the card's one-line status. ``playing`` and ``downloads``
+    feed the sidebar; they are only read for integrations that list the
+    matching section in ``Integration.provides``.
+    """
+
+    status: str | None = None
+    playing: list = field(default_factory=list)
+    downloads: list = field(default_factory=list)
+    download_speed: float = 0.0
 
 
 class Integration:
@@ -77,10 +87,27 @@ class Integration:
     needs_port = True
     probe_path = "/"
     default_port = ""
-    key_hint = ""  # shown in the settings UI next to the API key field
+    # Shown in the settings UI next to the API key field.
+    key_hint = ""
+    # Sidebar sections this kind can fill: "playing" and/or "downloads". The
+    # dashboard shows a section whenever a configured service provides it.
+    provides: frozenset[str] = frozenset()
 
-    def stats(self, client, ctx):
-        """One-line status for the card, or None to fall back to 'Online · 12 ms'."""
+    def stats(self, client, info):
+        """Status for the card, polled every few seconds.
+
+        ``info`` is this service's latest ``info()`` result. Return a string,
+        a ``Report`` when there is sidebar data too, or None to fall back to
+        "Online · 12 ms".
+        """
+        return None
+
+    def local_status(self, svc):
+        """Status for kinds checked without HTTP (e.g. by reading a log file).
+
+        Return ``(status, running)`` or None. Only called for scheduled
+        services; see ``is_scheduled``.
+        """
         return None
 
     def info(self, client):
@@ -101,7 +128,7 @@ class Arr(Integration):
     def _h(self, client):
         return {"X-Api-Key": client.api_key}
 
-    def stats(self, client, ctx):
+    def stats(self, client, info):
         if not client.api_key:
             return None
         q = client.json(f"/api/{self.api}/queue?pageSize=1", self._h(client))
@@ -135,7 +162,7 @@ class Prowlarr(Integration):
     default_port = "9696"
     key_hint = "Settings → General → API Key"
 
-    def stats(self, client, ctx):
+    def stats(self, client, info):
         if not client.api_key:
             return None
         h = {"X-Api-Key": client.api_key}
@@ -159,7 +186,7 @@ class Bazarr(Integration):
     default_port = "6767"
     key_hint = "Settings → General → Security → API Key"
 
-    def stats(self, client, ctx):
+    def stats(self, client, info):
         if not client.api_key:
             return None
         badges = client.json("/api/badges", {"X-API-KEY": client.api_key})
@@ -175,6 +202,7 @@ class Bazarr(Integration):
 class QBittorrent(Integration):
     label = "qBittorrent"
     default_port = "8080"
+    provides = frozenset({"downloads"})
     key_hint = "Web UI password (leave blank if localhost auth bypass is on)"
 
     LOGIN_FAILED = "Login failed — check username and password"
@@ -203,17 +231,19 @@ class QBittorrent(Integration):
             result = client.json(path)
         return result
 
-    def stats(self, client, ctx):
-        info = self._json(client, "/api/v2/transfer/info")
-        if info is None:
+    def stats(self, client, info):
+        transfer = self._json(client, "/api/v2/transfer/info")
+        if transfer is None:
             return self.LOGIN_FAILED if client.login_failed else None
         items = self._json(client, "/api/v2/torrents/info?filter=downloading") or []
-        speed = info.get("dl_info_speed", 0)
-        ctx.download_speed += speed
-        ctx.downloads.extend({"name": t["name"], "pct": t["progress"] * 100, "src": "qBittorrent"} for t in items)
+        speed = transfer.get("dl_info_speed", 0)
         active = sum(1 for t in items if t.get("dlspeed", 0) > 0)
         waiting = len(items) - active
-        return f"↓ {fmt_speed(speed)} · {active} active" + (f" · {waiting} queued" if waiting else "")
+        return Report(
+            status=f"↓ {fmt_speed(speed)} · {active} active" + (f" · {waiting} queued" if waiting else ""),
+            downloads=[{"name": t["name"], "pct": t["progress"] * 100, "src": "qBittorrent"} for t in items],
+            download_speed=speed,
+        )
 
     def info(self, client):
         status, body, _ = client.request("/api/v2/app/version")
@@ -225,9 +255,10 @@ class QBittorrent(Integration):
 class SABnzbd(Integration):
     label = "SABnzbd"
     default_port = "8085"
+    provides = frozenset({"downloads"})
     key_hint = "Config → General → API Key"
 
-    def stats(self, client, ctx):
+    def stats(self, client, info):
         if not client.api_key:
             return None
         data = client.json(f"/api?mode=queue&output=json&apikey={urllib.parse.quote(client.api_key)}")
@@ -235,15 +266,16 @@ class SABnzbd(Integration):
             return None
         q = data["queue"]
         speed = float(q.get("kbpersec") or 0) * 1000
-        ctx.download_speed += speed
-        ctx.downloads.extend(
-            {"name": s.get("filename", "?"), "pct": float(s.get("percentage", 0)), "src": "SABnzbd"}
-            for s in q.get("slots", [])
-        )
         n = int(q.get("noofslots", 0))
         if q.get("paused") or q.get("status") == "Paused":
-            return f"Paused · {plural(n, 'item')} waiting"
-        return f"↓ {fmt_speed(speed)} · {n} active" if n else "Idle"
+            status = f"Paused · {plural(n, 'item')} waiting"
+        else:
+            status = f"↓ {fmt_speed(speed)} · {n} active" if n else "Idle"
+        downloads = [
+            {"name": s.get("filename", "?"), "pct": float(s.get("percentage", 0)), "src": "SABnzbd"}
+            for s in q.get("slots", [])
+        ]
+        return Report(status=status, downloads=downloads, download_speed=speed)
 
     def info(self, client):
         return {"version": (client.json("/api?mode=version&output=json") or {}).get("version"), "extra": {}}
@@ -253,19 +285,21 @@ class Plex(Integration):
     label = "Plex"
     default_port = "32400"
     probe_path = "/identity"
+    provides = frozenset({"playing"})
     key_hint = "X-Plex-Token (see Plex support: 'Finding an authentication token')"
 
-    def stats(self, client, ctx):
+    def stats(self, client, info):
         if not client.api_key:
             return None
         sessions = client.json("/status/sessions", {"X-Plex-Token": client.api_key})
         if sessions is None:
             return None
         mc = sessions.get("MediaContainer", {})
-        for m in mc.get("Metadata", []) or []:
-            ctx.playing.append(self._session(m))
-        titles = ctx.cache.get(client.svc["id"], {}).get("extra", {}).get("titles")
-        return plural(int(mc.get("size", 0)), "stream") + (f" · {titles:,} titles" if titles is not None else "")
+        titles = (info or {}).get("extra", {}).get("titles")
+        return Report(
+            status=plural(int(mc.get("size", 0)), "stream") + (f" · {titles:,} titles" if titles is not None else ""),
+            playing=[self._session(m) for m in mc.get("Metadata", []) or []],
+        )
 
     @staticmethod
     def _session(m):
@@ -321,7 +355,7 @@ class Kometa(Integration):
 
     @staticmethod
     def parse_log(text, mtime, now=None):
-        now = now or time.time()
+        now = time.time() if now is None else now
         if now - mtime < 120 and "Finished Run" not in text[-4000:]:
             return "Running now", True
         runs = _KOMETA_RUN.findall(text)
@@ -333,7 +367,7 @@ class Kometa(Integration):
         day = day_label(datetime.strptime(end_date, "%Y-%m-%d"), datetime.fromtimestamp(now))
         return f"Last run {day} {end_time} · took {took}", False
 
-    def read(self, svc):
+    def local_status(self, svc):
         path = svc.get("log")
         if not path:
             return 'Set "log" to Kometa\'s meta.log', False
@@ -358,3 +392,20 @@ KINDS = {
     "sabnzbd": SABnzbd(),
     "kometa": Kometa(),
 }
+
+
+def is_scheduled(svc):
+    """True for services that are checked locally instead of over HTTP.
+
+    These are kinds that need no port (Kometa) and that the user has not given
+    a port anyway. They show "Scheduled" and have no uptime history.
+    """
+    return not KINDS[svc["kind"]].needs_port and not svc.get("port")
+
+
+def kinds_info():
+    """Kind metadata for the settings UI's Kind dropdown and API key hints."""
+    return {
+        name: {"label": k.label, "needsPort": k.needs_port, "defaultPort": k.default_port, "keyHint": k.key_hint}
+        for name, k in KINDS.items()
+    }

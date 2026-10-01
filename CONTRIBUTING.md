@@ -57,21 +57,36 @@ An integration teaches pi-hub to show a useful status line for one app. Most are
    class Jellyfin(Integration):
        label = "Jellyfin"
        default_port = "8096"
-       probe_path = "/health"  # cheap URL that answers when the app is up
-       key_hint = "Dashboard → API Keys"  # where users find the key
+       # A cheap URL that answers whenever the app is up.
+       probe_path = "/health"
+       # Where users find the key; shown in the settings page.
+       key_hint = "Dashboard → API Keys"
+       # Sidebar sections this kind can fill.
+       provides = frozenset({"playing"})
 
-       def stats(self, client, ctx):
+       def stats(self, client, info):
+           # Without a key the card falls back to "Online · 12 ms".
            if not client.api_key:
-               return None  # no key: card shows "Online · 12 ms"
+               return None
            sessions = client.json("/Sessions", {"X-Emby-Token": client.api_key})
            if sessions is None:
                return None
-           playing = [s for s in sessions if s.get("NowPlayingItem")]
-           return plural(len(playing), "stream")
+           playing = [
+               {
+                   "title": s["NowPlayingItem"]["Name"],
+                   "who": s.get("UserName", "?"),
+                   "how": "Direct play",
+                   "pct": 0,
+                   "state": "playing",
+               }
+               for s in sessions
+               if s.get("NowPlayingItem")
+           ]
+           return Report(status=plural(len(playing), "stream"), playing=playing)
 
        def info(self, client):
-           info = client.json("/System/Info/Public") or {}
-           return {"version": info.get("Version"), "extra": {}}
+           data = client.json("/System/Info/Public") or {}
+           return {"version": data.get("Version"), "extra": {}}
    ```
 
 2. Register it in `KINDS` at the bottom of the file: `"jellyfin": Jellyfin(),`.
@@ -80,9 +95,11 @@ An integration teaches pi-hub to show a useful status line for one app. Most are
 
 Tips:
 
-- `stats` runs every poll (default 15 s) — keep it to one or two cheap requests. Put anything slow in `info`, which runs every 10 minutes; its `extra` dict is available to `stats` through `ctx.cache[client.svc["id"]]`.
-- Return `None` on any failure; never raise for expected errors.
-- To feed the sidebar, append to `ctx.playing` or `ctx.downloads` (see `Plex` and `QBittorrent`).
+- `stats(client, info)` runs every poll (default 15 s) in a worker thread. Keep it to one or two cheap requests, and **return** what you found rather than storing it anywhere: a string for just a status line, or a `Report` when you also have sidebar data. The hub merges all reports after the workers finish.
+- Put anything slow in `info`, which runs every 10 minutes. Its last result is passed to `stats` as `info` (see how `Plex` reads the library size from `info["extra"]`).
+- Set `provides` to `{"playing"}` and/or `{"downloads"}` when your `Report` fills those sidebar sections; the dashboard shows a section whenever any configured service provides it.
+- Apps checked without HTTP (like Kometa, which writes a log file) set `needs_port = False` and implement `local_status(svc)` instead of `stats`.
+- Return `None` on any failure; never raise for expected errors. An unexpected exception is caught and logged, and the card falls back to "Online".
 - Always send secrets in headers when the app allows it, not in URLs.
 
 ## Pull requests

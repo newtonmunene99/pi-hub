@@ -8,7 +8,7 @@ import urllib.parse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import ClassVar
 
-from pihub.integrations import KINDS, Client, Context, Kometa
+from pihub.integrations import KINDS, Client, Kometa, Report, is_scheduled, kinds_info
 
 ROUTES = {
     "/api/v3/queue": {"totalRecords": 3},
@@ -98,49 +98,44 @@ class IntegrationTests(unittest.TestCase):
         return Client({"id": kind, "kind": kind, "port": self.port, "host": "127.0.0.1", **extra})
 
     def test_radarr_sonarr(self):
-        ctx = Context()
-        self.assertEqual(KINDS["radarr"].stats(self.client("radarr", apiKey="k"), ctx), "3 queued · 9 wanted")
-        self.assertEqual(KINDS["sonarr"].stats(self.client("sonarr", apiKey="k"), ctx), "3 queued · 9 missing")
+        self.assertEqual(KINDS["radarr"].stats(self.client("radarr", apiKey="k"), None), "3 queued · 9 wanted")
+        self.assertEqual(KINDS["sonarr"].stats(self.client("sonarr", apiKey="k"), None), "3 queued · 9 missing")
         self.assertEqual(KINDS["radarr"].info(self.client("radarr", apiKey="k"))["version"], "6.4.4")
         sent = [h for p, h in FakeApps.requests if p == "/api/v3/queue"][-1]
         self.assertEqual(sent.get("X-Api-Key"), "k")
 
     def test_no_key_means_no_stats_and_no_request(self):
         before = len(FakeApps.requests)
-        self.assertIsNone(KINDS["radarr"].stats(self.client("radarr"), Context()))
+        self.assertIsNone(KINDS["radarr"].stats(self.client("radarr"), None))
         self.assertEqual(len(FakeApps.requests), before)
 
     def test_prowlarr_counts_failing_indexers(self):
-        self.assertEqual(
-            KINDS["prowlarr"].stats(self.client("prowlarr", apiKey="k"), Context()), "1/2 indexers healthy"
-        )
+        self.assertEqual(KINDS["prowlarr"].stats(self.client("prowlarr", apiKey="k"), None), "1/2 indexers healthy")
 
     def test_bazarr(self):
         self.assertEqual(
-            KINDS["bazarr"].stats(self.client("bazarr", apiKey="k"), Context()), "1,234 episodes · 5 movies wanted"
+            KINDS["bazarr"].stats(self.client("bazarr", apiKey="k"), None), "1,234 episodes · 5 movies wanted"
         )
 
-    def test_qbittorrent_feeds_download_sidebar(self):
-        ctx = Context()
-        self.assertEqual(
-            KINDS["qbittorrent"].stats(self.client("qbittorrent"), ctx), "↓ 14.2 MB/s · 1 active · 1 queued"
-        )
-        self.assertEqual(len(ctx.downloads), 2)
-        self.assertEqual(ctx.download_speed, 14_200_000)
+    def test_qbittorrent_reports_downloads(self):
+        report = KINDS["qbittorrent"].stats(self.client("qbittorrent"), None)
+        self.assertIsInstance(report, Report)
+        self.assertEqual(report.status, "↓ 14.2 MB/s · 1 active · 1 queued")
+        self.assertEqual(len(report.downloads), 2)
+        self.assertEqual(report.download_speed, 14_200_000)
 
     def test_sabnzbd(self):
-        ctx = Context()
-        self.assertEqual(KINDS["sabnzbd"].stats(self.client("sabnzbd", apiKey="sabkey"), ctx), "↓ 4.2 MB/s · 1 active")
-        self.assertIsNone(KINDS["sabnzbd"].stats(self.client("sabnzbd", apiKey="wrong"), Context()))
-        self.assertEqual(ctx.downloads[0]["name"], "Some.Show")
+        report = KINDS["sabnzbd"].stats(self.client("sabnzbd", apiKey="sabkey"), None)
+        self.assertEqual(report.status, "↓ 4.2 MB/s · 1 active")
+        self.assertEqual(report.downloads[0]["name"], "Some.Show")
+        self.assertIsNone(KINDS["sabnzbd"].stats(self.client("sabnzbd", apiKey="wrong"), None))
 
     def test_plex_sessions(self):
-        ctx = Context()
-        ctx.cache = {"plex": {"extra": {"titles": 4812}}}
-        self.assertEqual(KINDS["plex"].stats(self.client("plex", apiKey="tok"), ctx), "1 stream · 4,812 titles")
-        self.assertEqual(ctx.playing[0]["title"], "Andor S02E09")
-        self.assertEqual(ctx.playing[0]["how"], "Transcode 1080p")
-        self.assertEqual(ctx.playing[0]["pct"], 25)
+        report = KINDS["plex"].stats(self.client("plex", apiKey="tok"), {"extra": {"titles": 4812}})
+        self.assertEqual(report.status, "1 stream · 4,812 titles")
+        self.assertEqual(report.playing[0]["title"], "Andor S02E09")
+        self.assertEqual(report.playing[0]["how"], "Transcode 1080p")
+        self.assertEqual(report.playing[0]["pct"], 25)
 
     def test_secret_resolver_is_used(self):
         c = Client(
@@ -151,6 +146,18 @@ class IntegrationTests(unittest.TestCase):
     def test_unreachable_service(self):
         c = Client({"id": "x", "port": "1", "host": "127.0.0.1"}, timeout=1)
         self.assertEqual(c.request("/"), (None, None, None))
+
+
+class RegistryTests(unittest.TestCase):
+    def test_scheduled_only_for_portless_local_kinds(self):
+        self.assertTrue(is_scheduled({"kind": "kometa", "port": ""}))
+        self.assertFalse(is_scheduled({"kind": "kometa", "port": "1234"}))
+        self.assertFalse(is_scheduled({"kind": "generic", "port": ""}))
+
+    def test_kinds_info_covers_every_kind(self):
+        info = kinds_info()
+        self.assertEqual(set(info), set(KINDS))
+        self.assertEqual(info["radarr"]["defaultPort"], "7878")
 
 
 class KometaTests(unittest.TestCase):
@@ -166,7 +173,7 @@ class KometaTests(unittest.TestCase):
         self.assertEqual(Kometa.parse_log("Starting run...", mtime=time.time())[1], True)
 
     def test_missing_log(self):
-        self.assertEqual(Kometa().read({"log": "/nonexistent/meta.log"}), ("Log not found", False))
+        self.assertEqual(Kometa().local_status({"log": "/nonexistent/meta.log"}), ("Log not found", False))
 
 
 class FakeQBittorrent(BaseHTTPRequestHandler):
@@ -215,7 +222,7 @@ class QBittorrentLoginTests(unittest.TestCase):
     def test_correct_password_logs_in_once(self):
         c, qbit = self.client("right"), KINDS["qbittorrent"]
         for _ in range(3):
-            self.assertEqual(qbit.stats(c, Context()), "↓ 0 MB/s · 0 active")
+            self.assertEqual(qbit.stats(c, None).status, "↓ 0 MB/s · 0 active")
         self.assertEqual(FakeQBittorrent.logins, ["right"])
         self.assertEqual(qbit.info(c)["version"], "5.1.0")
 
@@ -223,14 +230,14 @@ class QBittorrentLoginTests(unittest.TestCase):
         # qBittorrent bans an IP after 5 failed logins; pi-hub must not get there.
         c, qbit = self.client("wrong"), KINDS["qbittorrent"]
         for _ in range(10):
-            self.assertEqual(qbit.stats(c, Context()), qbit.LOGIN_FAILED)
+            self.assertEqual(qbit.stats(c, None), qbit.LOGIN_FAILED)
         qbit.info(c)
         self.assertEqual(len(FakeQBittorrent.logins), 1)
 
     def test_new_credentials_get_a_fresh_attempt(self):
         qbit = KINDS["qbittorrent"]
-        qbit.stats(self.client("wrong"), Context())
-        self.assertEqual(qbit.stats(self.client("right"), Context()), "↓ 0 MB/s · 0 active")
+        qbit.stats(self.client("wrong"), None)
+        self.assertEqual(qbit.stats(self.client("right"), None).status, "↓ 0 MB/s · 0 active")
         self.assertEqual(FakeQBittorrent.logins, ["wrong", "right"])
 
 
