@@ -140,12 +140,20 @@ def normalise(raw):
             raise ConfigError("Each disk needs a name and a path")
     return {
         "title": str(raw.get("title", "pi-hub"))[:30],
-        "pollSeconds": max(5, int(raw.get("pollSeconds", 15))),
+        "pollSeconds": _poll_seconds(raw.get("pollSeconds", 15)),
         "categories": categories,
         "system": system,
         "schedule": schedule,
         "services": services,
     }
+
+
+def _poll_seconds(value):
+    try:
+        seconds = int(value)
+    except (TypeError, ValueError):
+        raise ConfigError(f"pollSeconds must be a whole number of seconds, not {value!r}") from None
+    return max(5, seconds)
 
 
 def load(path):

@@ -49,6 +49,13 @@ class NormaliseTests(unittest.TestCase):
         cfg = config.normalise({"services": [{"name": "Kometa", "kind": "kometa", "log": "/logs/meta.log"}]})
         self.assertEqual(cfg["services"][0]["log"], "/logs/meta.log")
 
+    def test_poll_seconds(self):
+        self.assertEqual(config.normalise({"pollSeconds": "30"})["pollSeconds"], 30)
+        self.assertEqual(config.normalise({"pollSeconds": 1})["pollSeconds"], 5)
+        for bad in ("fast", None, [15]):
+            with self.subTest(bad=bad), self.assertRaisesRegex(config.ConfigError, "pollSeconds"):
+                config.normalise({"pollSeconds": bad})
+
     def test_schedule_validation(self):
         cfg = config.normalise({"schedule": [{"name": "Backup", "at": "05:00"}]})
         self.assertEqual(cfg["schedule"][0]["at"], ["05:00"])

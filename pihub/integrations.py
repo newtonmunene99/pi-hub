@@ -32,6 +32,8 @@ class Client:
         self.secret = secret
         self.timeout = timeout
         self.cookies = http.cookiejar.CookieJar()
+        # Set by integrations that log in (qBittorrent) after a rejected login.
+        self.login_failed = False
         self.opener = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(self.cookies))
 
     @property
@@ -175,24 +177,36 @@ class QBittorrent(Integration):
     default_port = "8080"
     key_hint = "Web UI password (leave blank if localhost auth bypass is on)"
 
+    LOGIN_FAILED = "Login failed — check username and password"
+
     def _login(self, client):
-        user = client.svc.get("username")
-        if not user:
-            return
-        data = urllib.parse.urlencode({"username": user, "password": client.secret(client.svc.get("password", ""))})
-        client.request("/api/v2/auth/login", {"Referer": client.base}, data.encode())
+        """Log in once per Client; a failure is remembered so it is never retried.
+
+        qBittorrent bans an IP after a few failed logins (5 by default), so
+        retrying a wrong password on every poll would lock the host out. The hub
+        builds a new Client whenever the credentials change, which is what
+        clears ``login_failed``.
+        """
+        if client.login_failed:
+            return False
+        data = urllib.parse.urlencode(
+            {"username": client.svc["username"], "password": client.secret(client.svc.get("password", ""))}
+        )
+        status, body, _ = client.request("/api/v2/auth/login", {"Referer": client.base}, data.encode())
+        ok = status == 200 and (body or b"").strip() == b"Ok."
+        client.login_failed = not ok and status is not None
+        return ok
 
     def _json(self, client, path):
         result = client.json(path)
-        if result is None and client.svc.get("username"):
-            self._login(client)  # session expired or first call
+        if result is None and client.svc.get("username") and self._login(client):
             result = client.json(path)
         return result
 
     def stats(self, client, ctx):
         info = self._json(client, "/api/v2/transfer/info")
         if info is None:
-            return None
+            return self.LOGIN_FAILED if client.login_failed else None
         items = self._json(client, "/api/v2/torrents/info?filter=downloading") or []
         speed = info.get("dl_info_speed", 0)
         ctx.download_speed += speed
@@ -202,9 +216,9 @@ class QBittorrent(Integration):
         return f"↓ {fmt_speed(speed)} · {active} active" + (f" · {waiting} queued" if waiting else "")
 
     def info(self, client):
-        if client.svc.get("username"):
-            self._login(client)
         status, body, _ = client.request("/api/v2/app/version")
+        if status == 403 and client.svc.get("username") and self._login(client):
+            status, body, _ = client.request("/api/v2/app/version")
         return {"version": body.decode().strip().lstrip("v") if status == 200 and body else None, "extra": {}}
 
 
