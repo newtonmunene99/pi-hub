@@ -29,7 +29,7 @@ pip install ruff   # once
 ruff check . && ruff format --check .
 ```
 
-CI runs both on Python 3.10–3.13, builds the Docker image, and scans for secrets.
+CI runs both on Python 3.10–3.14, builds the Docker image, and scans for secrets.
 
 ## Project layout
 
