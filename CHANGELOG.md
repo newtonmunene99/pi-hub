@@ -4,6 +4,10 @@ All notable changes are listed here. The format follows [Keep a Changelog](https
 
 ## [Unreleased]
 
+### Added
+
+- README: how to use the published Docker image (tags, platforms, `docker run`, updating).
+
 ### Fixed
 
 - qBittorrent: a wrong username/password is no longer retried on every poll, which could get pi-hub's IP banned by qBittorrent. The card now says "Login failed — check username and password".
@@ -12,6 +16,9 @@ All notable changes are listed here. The format follows [Keep a Changelog](https
 
 ### Changed
 
+- Python 3.11 or newer is required (3.10 reaches end of life in October 2026).
+- Log output now uses Python logging with timestamps and levels, and includes tracebacks when an integration fails; set the level with `PIHUB_LOG_LEVEL`.
+- Network errors are told apart from programming errors: only connection, timeout and HTTP failures count as "Not responding".
 - Integration API: `stats(client, info)` now *returns* its findings (a string, or a `Report` with sidebar data) instead of writing to a shared context, and integrations declare the sidebar sections they fill with `provides`. New media or download integrations get the sidebar without changes to the hub. See CONTRIBUTING.md.
 
 ## [0.1.0] - 2026-10-01

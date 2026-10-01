@@ -30,9 +30,38 @@ Open `http://<your-server>:8000`.
 
 The container runs as UID 1000 — make sure it can write `config/` (`sudo chown -R 1000 config`).
 
+### Docker image
+
+Images are published to the GitHub Container Registry for `linux/amd64`, `linux/arm64` (Raspberry Pi 4/5 on a 64-bit OS) and `linux/arm/v7` (32-bit Raspberry Pi OS):
+
+```
+ghcr.io/newtonmunene99/pi-hub
+```
+
+| Tag | Updates to |
+|---|---|
+| `0.1` | the latest `0.1.x` bug-fix release — **recommended** |
+| `0.1.0` | exactly that release, never changes |
+| `latest` | the newest release, including new minor versions |
+
+Without Compose, the same setup as the example above:
+
+```sh
+docker run -d --name pi-hub --restart unless-stopped \
+  --network host \
+  -e TZ=Etc/UTC \
+  -v "$PWD/config:/config" \
+  -v /mnt/media:/disks/media:ro \
+  ghcr.io/newtonmunene99/pi-hub:0.1
+```
+
+On bridge networking, replace `--network host` with `-p 8000:8000` and set each service's `host` in `config.json` to your server's LAN IP (see [Networking](docs/configuration.md#networking)).
+
+To update: `docker compose pull && docker compose up -d` (or pull and re-create the container). The version is printed in the log on start: `docker logs pi-hub | head -1`.
+
 ### Without Docker
 
-Python 3.10 or newer:
+Python 3.11 or newer:
 
 ```sh
 git clone https://github.com/newtonmunene99/pi-hub && cd pi-hub
@@ -82,6 +111,7 @@ Want another app? See [adding an integration](CONTRIBUTING.md#adding-an-integrat
 | `PIHUB_PASSWORD` | — | require a password for the settings page |
 | `PIHUB_READONLY` | — | `1` disables editing in the UI |
 | `PIHUB_DEMO` | — | `1` serves fake data |
+| `PIHUB_LOG_LEVEL` | `INFO` | `DEBUG`, `INFO`, `WARNING` or `ERROR` |
 | `TZ` | `UTC` | timezone for the schedule |
 
 ## Security

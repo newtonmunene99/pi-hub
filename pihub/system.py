@@ -7,6 +7,8 @@ import glob
 import os
 import re
 import shutil
+from collections.abc import Iterable, Mapping
+from typing import Any
 
 from .util import fmt_duration, fmt_size
 
@@ -14,7 +16,7 @@ PROC = os.environ.get("PIHUB_PROC", "/proc")
 SYS = os.environ.get("PIHUB_SYS", "/sys")
 
 
-def _read(path):
+def _read(path: str) -> str:
     with open(path) as f:
         return f.read()
 
@@ -22,10 +24,11 @@ def _read(path):
 class CpuMeter:
     """CPU busy % between consecutive calls, from /proc/stat."""
 
-    def __init__(self):
-        self.prev = None
+    def __init__(self) -> None:
+        self.prev: tuple[int, int] | None = None
 
-    def percent(self):
+    def percent(self) -> float:
+        """Busy percentage since the previous call (0 on the first call)."""
         vals = list(map(int, _read(f"{PROC}/stat").splitlines()[0].split()[1:]))
         idle, total = vals[3] + vals[4], sum(vals)
         pct = 0.0
@@ -36,7 +39,7 @@ class CpuMeter:
         return max(0.0, min(pct, 100.0))
 
 
-def cpu_temperature():
+def cpu_temperature() -> float | None:
     """CPU temperature in °C, preferring a zone whose type mentions cpu/soc/pkg."""
     zones = sorted(glob.glob(f"{SYS}/class/thermal/thermal_zone*"))
     ranked = []
@@ -50,7 +53,7 @@ def cpu_temperature():
     return sorted(ranked)[0][1] if ranked else None
 
 
-def argon_fan_speed(temp, conf_text):
+def argon_fan_speed(temp: float, conf_text: str) -> int:
     """Fan % the Argon ONE daemon applies at ``temp`` for an argononed.conf.
 
     Mirrors argononed's step logic: the highest threshold <= temp wins and
@@ -67,9 +70,10 @@ def argon_fan_speed(temp, conf_text):
     return 0
 
 
-def fan_text(fan_cfg, temp):
+def fan_text(fan_cfg: Mapping[str, Any] | None, temp: float | None) -> str:
     """Short fan description for the CPU card, or '' if not configured."""
-    kind = (fan_cfg or {}).get("type")
+    fan_cfg = fan_cfg or {}
+    kind = fan_cfg.get("type")
     try:
         if kind == "argon" and temp is not None:
             speed = argon_fan_speed(temp, _read(fan_cfg.get("config", "/argononed.conf")))
@@ -83,7 +87,8 @@ def fan_text(fan_cfg, temp):
     return ""
 
 
-def board_name(override=""):
+def board_name(override: str = "") -> str:
+    """Short board name such as "Pi 5", from the device tree unless overridden."""
     if override:
         return override
     try:
@@ -94,7 +99,8 @@ def board_name(override=""):
     return f"Pi {m.group(1)}" if m else model.split(" Rev ")[0]
 
 
-def memory():
+def memory() -> tuple[int, int]:
+    """(used, total) bytes, where used excludes reclaimable cache."""
     info = {}
     for line in _read(f"{PROC}/meminfo").splitlines():
         key, _, rest = line.partition(":")
@@ -103,7 +109,8 @@ def memory():
     return total - info.get("MemAvailable", info.get("MemFree", 0)), total
 
 
-def disk_cards(disks):
+def disk_cards(disks: Iterable[Mapping[str, str]]) -> list[dict[str, Any]]:
+    """One stats card per configured disk; a missing mount gives a red "not mounted" card."""
     cards = []
     for disk in disks:
         try:
@@ -120,9 +127,18 @@ def disk_cards(disks):
     return cards
 
 
-def collect(system_cfg, cpu_meter):
-    """All system cards for the stats row plus host uptime."""
-    cards = []
+def collect(system_cfg: Mapping[str, Any], cpu_meter: CpuMeter) -> dict[str, Any]:
+    """Builds the stats row.
+
+    Args:
+        system_cfg: The ``system`` section of config.json.
+        cpu_meter: Kept by the caller between polls so CPU % covers the interval.
+
+    Returns:
+        ``{"cards": [...], "uptime": "41d 6h"}``. Stats the host cannot provide
+        are left out rather than raising.
+    """
+    cards: list[dict[str, Any]] = []
     temp = cpu_temperature() if system_cfg.get("temperature", True) else None
     if temp is not None:
         detail = " · ".join(

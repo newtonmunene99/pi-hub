@@ -10,7 +10,7 @@ Thanks for helping! Bug reports, new integrations, docs fixes and design polish 
 
 ## Getting set up
 
-You need Python 3.10+ and nothing else.
+You need Python 3.11+ and nothing else.
 
 ```sh
 git clone https://github.com/newtonmunene99/pi-hub && cd pi-hub
@@ -25,11 +25,13 @@ To run against real services, copy `config.example.json` to `config.json`, edit 
 
 ```sh
 python3 -m unittest discover -s tests -t .
-pip install ruff   # once
-ruff check . && ruff format --check .
+pip install ruff mypy   # once
+ruff check . && ruff format --check . && mypy
 ```
 
-CI runs both on Python 3.10–3.14, builds the Docker image, and scans for secrets.
+CI runs these on Python 3.11–3.14, builds the Docker image, and scans for secrets. `mypy` requires type annotations on every function in `pihub/` (tests are exempt).
+
+The tests use the standard library's `unittest` rather than pytest on purpose: pi-hub has no dependencies, and that includes for running its tests.
 
 ## Project layout
 

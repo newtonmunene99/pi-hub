@@ -13,8 +13,11 @@ import copy
 import json
 import os
 import re
+from collections.abc import Mapping, Sequence
+from typing import Any, cast
 
 from .integrations import KINDS
+from .models import Config, Service
 
 DEFAULT_CATEGORIES = ["Media", "Automation", "Downloads", "System"]
 SECRET_FIELDS = ("apiKey", "password")
@@ -31,12 +34,21 @@ class ConfigError(ValueError):
     """Raised for invalid configuration; the message is safe to show users."""
 
 
-def slugify(text):
+def slugify(text: str) -> str:
+    """Lowercase, hyphen-separated id from a name: "Radarr 4K" -> "radarr-4k"."""
     return re.sub(r"[^a-z0-9]+", "-", text.lower()).strip("-") or "service"
 
 
-def resolve_secret(value):
-    """Return the secret a config value points at ('' if unset or unresolvable)."""
+def resolve_secret(value: str | None) -> str:
+    """Returns the secret a config value points at.
+
+    Args:
+        value: A literal secret, ``"env:NAME"`` or ``"file:/path"``.
+
+    Returns:
+        The secret, or ``""`` if the value is empty or the variable or file is
+        missing. Never raises, so a missing secret degrades to "no stats".
+    """
     if not value:
         return ""
     value = str(value)
@@ -51,12 +63,17 @@ def resolve_secret(value):
     return value
 
 
-def is_reference(value):
+def is_reference(value: object) -> bool:
+    """True for ``env:``/``file:`` references, which are safe to show in the UI."""
     return isinstance(value, str) and value.startswith(("env:", "file:"))
 
 
-def _normalise_service(raw, categories):
-    """Validate one service entry and fill defaults. Raises ConfigError."""
+def _normalise_service(raw: object, categories: Sequence[str]) -> Service:
+    """Validates one service entry and fills in defaults.
+
+    Raises:
+        ConfigError: The entry is not an object or a field is invalid.
+    """
     if not isinstance(raw, dict):
         raise ConfigError("Each service must be an object")
     name = str(raw.get("name", "")).strip()
@@ -76,11 +93,11 @@ def _normalise_service(raw, categories):
     scheme = raw.get("scheme", "http")
     if scheme not in ("http", "https"):
         raise ConfigError(f"{name}: scheme must be http or https")
-    svc = {
+    svc: Service = {
         "id": slugify(str(raw.get("id") or name)),
         "name": name[:40],
         "kind": kind,
-        "category": raw.get("category") if raw.get("category") in categories else categories[-1],
+        "category": str(raw["category"]) if raw.get("category") in categories else categories[-1],
         "scheme": scheme,
         "host": host,
         "port": port,
@@ -93,16 +110,16 @@ def _normalise_service(raw, categories):
     }
     if svc["url"] and not svc["url"].startswith(("http://", "https://")):
         raise ConfigError(f"{name}: url must start with http:// or https://")
-    for field in ("username", "log"):
+    # Optional keys are only stored when set, so an unset secret never
+    # appears in config.json as an empty string.
+    for field in ("username", "log", *SECRET_FIELDS):
         if raw.get(field):
-            svc[field] = str(raw[field])
-    for field in SECRET_FIELDS:
-        if raw.get(field):
-            svc[field] = str(raw[field])
+            cast(dict[str, Any], svc)[field] = str(raw[field])
     return svc
 
 
-def _clean_path(value, name, field):
+def _clean_path(value: object, name: str, field: str) -> str:
+    """Normalises a URL path to "" or "/x/y" (leading slash, no trailing slash)."""
     value = str(value or "").strip()
     if value and not value.startswith("/"):
         value = "/" + value
@@ -112,14 +129,29 @@ def _clean_path(value, name, field):
     return value
 
 
-def normalise(raw):
-    """Validate a whole config document and return a normalised copy."""
+def normalise(raw: object) -> Config:
+    """Validates a whole config document and returns a normalised copy.
+
+    Fills every default, turns duplicate service ids into ``id-2``, ``id-3``
+    and so on, and accepts a single ``"at"`` time as well as a list.
+
+    Args:
+        raw: The parsed config.json, or a config being re-validated.
+
+    Returns:
+        A new, fully populated config; ``raw`` is not modified.
+
+    Raises:
+        ConfigError: Anything is invalid. The message names the problem in
+            terms a user can act on.
+    """
     if not isinstance(raw, dict):
         raise ConfigError("Config must be a JSON object")
     categories = raw.get("categories") or DEFAULT_CATEGORIES
     if not isinstance(categories, list) or not all(isinstance(c, str) and c for c in categories):
         raise ConfigError("categories must be a list of names")
-    services, seen = [], set()
+    services: list[Service] = []
+    seen: set[str] = set()
     for entry in raw.get("services", []):
         svc = _normalise_service(entry, categories)
         base, n = svc["id"], 2
@@ -127,7 +159,7 @@ def normalise(raw):
             svc["id"], n = f"{base}-{n}", n + 1
         seen.add(svc["id"])
         services.append(svc)
-    schedule = []
+    schedule: list[dict[str, Any]] = []
     for job in raw.get("schedule", []):
         times = job.get("at", [])
         times = [times] if isinstance(times, str) else list(times)
@@ -148,15 +180,20 @@ def normalise(raw):
     }
 
 
-def _poll_seconds(value):
+def _poll_seconds(value: object) -> int:
     try:
-        seconds = int(value)
+        seconds = int(value)  # type: ignore[call-overload]
     except (TypeError, ValueError):
         raise ConfigError(f"pollSeconds must be a whole number of seconds, not {value!r}") from None
     return max(5, seconds)
 
 
-def load(path):
+def load(path: str) -> Config:
+    """Reads and validates a config file.
+
+    Raises:
+        ConfigError: The file is missing, is not JSON, or fails validation.
+    """
     try:
         with open(path) as f:
             raw = json.load(f)
@@ -167,7 +204,12 @@ def load(path):
     return normalise(raw)
 
 
-def save(path, cfg):
+def save(path: str, cfg: Config) -> None:
+    """Writes the config atomically, readable only by its owner (it may hold secrets).
+
+    The file is written to ``path + ".tmp"`` and renamed over the old one, so
+    a crash mid-write never leaves a truncated config.
+    """
     tmp = path + ".tmp"
     fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
     with os.fdopen(fd, "w") as f:
@@ -176,11 +218,16 @@ def save(path, cfg):
     os.replace(tmp, path)
 
 
-def public_services(cfg):
-    """Service list for the settings UI: literal secrets replaced by flags."""
+def public_services(cfg: Config) -> list[dict[str, Any]]:
+    """Service list for the settings UI, safe to send to a browser.
+
+    Each secret field is replaced by ``<field>Set`` (whether a value is stored)
+    and ``<field>Ref`` (the reference name if it is ``env:``/``file:``, else
+    ``""``). Literal secrets are never included.
+    """
     out = []
     for svc in cfg["services"]:
-        view = {k: v for k, v in svc.items() if k not in SECRET_FIELDS}
+        view: dict[str, Any] = {k: v for k, v in svc.items() if k not in SECRET_FIELDS}
         for field in SECRET_FIELDS:
             value = svc.get(field)
             view[f"{field}Set"] = bool(value)
@@ -189,23 +236,41 @@ def public_services(cfg):
     return out
 
 
-def apply_update(cfg, payload):
-    """Merge services edited in the UI into cfg. Returns (new_cfg, notices).
+def apply_update(cfg: Config, payload: object) -> tuple[Config, list[str]]:
+    """Merges services edited in the settings page into a config.
 
     Secret fields are write-only: an empty value keeps the stored secret,
     ``clearApiKey``/``clearPassword`` removes it, and any change to where the
-    service lives (TARGET_FIELDS) drops stored secrets so they can't be
-    redirected to another host.
+    service lives (``TARGET_FIELDS``) drops stored secrets so they cannot be
+    redirected to another host. Fields the UI does not send (such as ``log``)
+    are kept from the stored service.
+
+    Args:
+        cfg: The current config; not modified.
+        payload: The request body, ``{"services": [...]}``. Rows with a blank
+            name are treated as removed.
+
+    Returns:
+        The new, validated config and a list of notices for the user (for
+        example that a key was dropped because the address changed).
+
+    Raises:
+        ConfigError: The payload is malformed or the result is invalid.
     """
     if not isinstance(payload, dict) or not isinstance(payload.get("services"), list):
         raise ConfigError('Expected {"services": [...]}')
-    old = {s["id"]: s for s in cfg["services"]}
-    merged, notices = [], []
+    old: dict[str, Mapping[str, Any]] = {s["id"]: s for s in cfg["services"]}
+    merged: list[dict[str, Any]] = []
+    notices: list[str] = []
     for entry in payload["services"]:
+        # A blank row is a service the user removed.
         if not isinstance(entry, dict) or not str(entry.get("name", "")).strip():
-            continue  # blank rows are ignored (removed)
-        prev = old.get(entry.get("id"), {})
-        svc = {**prev, **{k: v for k, v in entry.items() if k not in SECRET_FIELDS and not k.endswith(("Set", "Ref"))}}
+            continue
+        prev = old.get(entry.get("id", ""), {})
+        svc: dict[str, Any] = {
+            **prev,
+            **{k: v for k, v in entry.items() if k not in SECRET_FIELDS and not k.endswith(("Set", "Ref"))},
+        }
         if not prev:
             svc.pop("id", None)
         moved = prev and any(str(svc.get(f, "")) != str(prev.get(f, "")) for f in TARGET_FIELDS)
@@ -219,6 +284,5 @@ def apply_update(cfg, payload):
                 if moved and not clear and prev.get(field):
                     notices.append(f"{svc['name']}: address changed, so its {field} was removed - enter it again.")
         merged.append(svc)
-    new_cfg = copy.deepcopy(cfg)
-    new_cfg["services"] = merged
+    new_cfg: dict[str, Any] = {**copy.deepcopy(cfg), "services": merged}
     return normalise(new_cfg), notices

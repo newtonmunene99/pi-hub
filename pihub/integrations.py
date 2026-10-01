@@ -13,6 +13,7 @@ service and *returns* everything it found (a ``Report``); the hub merges the
 reports afterwards.
 """
 
+import http.client
 import http.cookiejar
 import json
 import os
@@ -21,16 +22,33 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
+from collections.abc import Callable
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
+from typing import Any
 
+from .models import Info, Service
 from .util import day_label, fmt_speed, plural
+
+# (status, body, elapsed_ms); status is None when the service was unreachable.
+Response = tuple[int | None, bytes | None, float | None]
 
 
 class Client:
-    """Tiny HTTP client bound to one service's base URL."""
+    """Tiny HTTP client bound to one service's base URL.
 
-    def __init__(self, svc, secret=lambda v: v, timeout=5):
+    Keeps a cookie jar so integrations that log in (qBittorrent) reuse their
+    session across polls; the hub keeps one Client per service for that reason.
+    """
+
+    def __init__(self, svc: Service, secret: Callable[[str], str] = lambda v: v, timeout: float = 5) -> None:
+        """Binds to a service.
+
+        Args:
+            svc: The service; its scheme, host, port and basePath form the base URL.
+            secret: Resolves a stored secret (``env:``/``file:`` references).
+            timeout: Seconds to wait for each request.
+        """
         host = svc.get("host") or "127.0.0.1"
         self.base = f"{svc.get('scheme', 'http')}://{host}:{svc['port']}{svc.get('basePath', '')}"
         self.svc = svc
@@ -42,11 +60,20 @@ class Client:
         self.opener = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(self.cookies))
 
     @property
-    def api_key(self):
+    def api_key(self) -> str:
+        """The service's API key, resolved; ``""`` if none is configured."""
         return self.secret(self.svc.get("apiKey", ""))
 
-    def request(self, path, headers=None, data=None, timeout=None):
-        """Return (status, body, elapsed_ms). status is None if unreachable."""
+    def request(
+        self, path: str, headers: dict[str, str] | None = None, data: bytes | None = None, timeout: float | None = None
+    ) -> Response:
+        """Sends a GET (or a POST when ``data`` is given) to ``base + path``.
+
+        Returns:
+            ``(status, body, elapsed_ms)``. HTTP errors are returned, not
+            raised, with an empty body. When the service cannot be reached at
+            all the result is ``(None, None, None)``.
+        """
         req = urllib.request.Request(self.base + path, data=data, headers={"User-Agent": "pi-hub", **(headers or {})})
         start = time.monotonic()
         try:
@@ -54,10 +81,13 @@ class Client:
                 return r.status, r.read(), (time.monotonic() - start) * 1000
         except urllib.error.HTTPError as e:
             return e.code, b"", (time.monotonic() - start) * 1000
-        except Exception:
+        except (OSError, http.client.HTTPException, ValueError):
+            # Unreachable: refused, timed out, DNS failure, broken HTTP, or a
+            # malformed URL. Anything else is a bug and should surface.
             return None, None, None
 
-    def json(self, path, headers=None):
+    def json(self, path: str, headers: dict[str, str] | None = None) -> Any:
+        """GETs ``path`` and parses JSON; None on any error or non-200 status."""
         status, body, _ = self.request(path, {"Accept": "application/json", **(headers or {})})
         if status != 200 or not body:
             return None
@@ -77,12 +107,18 @@ class Report:
     """
 
     status: str | None = None
-    playing: list = field(default_factory=list)
-    downloads: list = field(default_factory=list)
+    playing: list[dict[str, Any]] = field(default_factory=list)
+    downloads: list[dict[str, Any]] = field(default_factory=list)
     download_speed: float = 0.0
 
 
 class Integration:
+    """Base class for a kind. Subclasses override class attributes and methods.
+
+    Instances are stateless and shared by every service of that kind; anything
+    per-service lives on the ``Client`` (cookies, login state).
+    """
+
     label = "Web app"
     needs_port = True
     probe_path = "/"
@@ -93,7 +129,7 @@ class Integration:
     # dashboard shows a section whenever a configured service provides it.
     provides: frozenset[str] = frozenset()
 
-    def stats(self, client, info):
+    def stats(self, client: Client, info: Info | None) -> str | Report | None:
         """Status for the card, polled every few seconds.
 
         ``info`` is this service's latest ``info()`` result. Return a string,
@@ -102,7 +138,7 @@ class Integration:
         """
         return None
 
-    def local_status(self, svc):
+    def local_status(self, svc: Service) -> tuple[str, bool] | None:
         """Status for kinds checked without HTTP (e.g. by reading a log file).
 
         Return ``(status, running)`` or None. Only called for scheduled
@@ -110,8 +146,8 @@ class Integration:
         """
         return None
 
-    def info(self, client):
-        """Slow-changing details: {'version': str|None, 'extra': {...}}."""
+    def info(self, client: Client) -> Info:
+        """Slow-changing details (version, library size), refreshed every 10 minutes."""
         return {"version": None, "extra": {}}
 
 
@@ -125,10 +161,10 @@ class Arr(Integration):
     api = "v3"
     missing_word = "wanted"
 
-    def _h(self, client):
+    def _h(self, client: Client) -> dict[str, str]:
         return {"X-Api-Key": client.api_key}
 
-    def stats(self, client, info):
+    def stats(self, client: Client, info: Info | None) -> str | Report | None:
         if not client.api_key:
             return None
         q = client.json(f"/api/{self.api}/queue?pageSize=1", self._h(client))
@@ -139,7 +175,7 @@ class Arr(Integration):
         missing = miss.get("totalRecords", 0) if miss else "?"
         return f"{queued} queued · {missing} {self.missing_word}"
 
-    def info(self, client):
+    def info(self, client: Client) -> Info:
         status = client.json(f"/api/{self.api}/system/status", self._h(client)) or {}
         return {"version": status.get("version"), "extra": {}}
 
@@ -162,7 +198,7 @@ class Prowlarr(Integration):
     default_port = "9696"
     key_hint = "Settings → General → API Key"
 
-    def stats(self, client, info):
+    def stats(self, client: Client, info: Info | None) -> str | Report | None:
         if not client.api_key:
             return None
         h = {"X-Api-Key": client.api_key}
@@ -170,13 +206,13 @@ class Prowlarr(Integration):
         if indexers is None:
             return None
         status = client.json("/api/v1/indexerstatus", h) or []
-        now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S")
+        now = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%S")
         failing = {s["indexerId"] for s in status if (s.get("disabledTill") or "") > now}
         enabled = [i["id"] for i in indexers if i.get("enable")]
         healthy = sum(1 for i in enabled if i not in failing)
         return f"{healthy}/{len(enabled)} indexers healthy"
 
-    def info(self, client):
+    def info(self, client: Client) -> Info:
         status = client.json("/api/v1/system/status", {"X-Api-Key": client.api_key}) or {}
         return {"version": status.get("version"), "extra": {}}
 
@@ -186,7 +222,7 @@ class Bazarr(Integration):
     default_port = "6767"
     key_hint = "Settings → General → Security → API Key"
 
-    def stats(self, client, info):
+    def stats(self, client: Client, info: Info | None) -> str | Report | None:
         if not client.api_key:
             return None
         badges = client.json("/api/badges", {"X-API-KEY": client.api_key})
@@ -194,7 +230,7 @@ class Bazarr(Integration):
             return None
         return f"{badges.get('episodes', 0):,} episodes · {badges.get('movies', 0):,} movies wanted"
 
-    def info(self, client):
+    def info(self, client: Client) -> Info:
         status = client.json("/api/system/status", {"X-API-KEY": client.api_key}) or {}
         return {"version": (status.get("data") or {}).get("bazarr_version"), "extra": {}}
 
@@ -207,7 +243,7 @@ class QBittorrent(Integration):
 
     LOGIN_FAILED = "Login failed — check username and password"
 
-    def _login(self, client):
+    def _login(self, client: Client) -> bool:
         """Log in once per Client; a failure is remembered so it is never retried.
 
         qBittorrent bans an IP after a few failed logins (5 by default), so
@@ -225,13 +261,14 @@ class QBittorrent(Integration):
         client.login_failed = not ok and status is not None
         return ok
 
-    def _json(self, client, path):
+    def _json(self, client: Client, path: str) -> Any:
+        """GETs JSON, logging in first if the session is missing or expired."""
         result = client.json(path)
         if result is None and client.svc.get("username") and self._login(client):
             result = client.json(path)
         return result
 
-    def stats(self, client, info):
+    def stats(self, client: Client, info: Info | None) -> str | Report | None:
         transfer = self._json(client, "/api/v2/transfer/info")
         if transfer is None:
             return self.LOGIN_FAILED if client.login_failed else None
@@ -245,7 +282,7 @@ class QBittorrent(Integration):
             download_speed=speed,
         )
 
-    def info(self, client):
+    def info(self, client: Client) -> Info:
         status, body, _ = client.request("/api/v2/app/version")
         if status == 403 and client.svc.get("username") and self._login(client):
             status, body, _ = client.request("/api/v2/app/version")
@@ -258,7 +295,7 @@ class SABnzbd(Integration):
     provides = frozenset({"downloads"})
     key_hint = "Config → General → API Key"
 
-    def stats(self, client, info):
+    def stats(self, client: Client, info: Info | None) -> str | Report | None:
         if not client.api_key:
             return None
         data = client.json(f"/api?mode=queue&output=json&apikey={urllib.parse.quote(client.api_key)}")
@@ -277,7 +314,7 @@ class SABnzbd(Integration):
         ]
         return Report(status=status, downloads=downloads, download_speed=speed)
 
-    def info(self, client):
+    def info(self, client: Client) -> Info:
         return {"version": (client.json("/api?mode=version&output=json") or {}).get("version"), "extra": {}}
 
 
@@ -288,21 +325,22 @@ class Plex(Integration):
     provides = frozenset({"playing"})
     key_hint = "X-Plex-Token (see Plex support: 'Finding an authentication token')"
 
-    def stats(self, client, info):
+    def stats(self, client: Client, info: Info | None) -> str | Report | None:
         if not client.api_key:
             return None
         sessions = client.json("/status/sessions", {"X-Plex-Token": client.api_key})
         if sessions is None:
             return None
         mc = sessions.get("MediaContainer", {})
-        titles = (info or {}).get("extra", {}).get("titles")
+        titles = info["extra"].get("titles") if info else None
         return Report(
             status=plural(int(mc.get("size", 0)), "stream") + (f" · {titles:,} titles" if titles is not None else ""),
             playing=[self._session(m) for m in mc.get("Metadata", []) or []],
         )
 
     @staticmethod
-    def _session(m):
+    def _session(m: dict[str, Any]) -> dict[str, Any]:
+        """One Plex session as a "Now playing" sidebar row."""
         if m.get("type") == "episode":
             title = f"{m.get('grandparentTitle', '')} S{m.get('parentIndex', 0):02d}E{m.get('index', 0):02d}"
         else:
@@ -322,7 +360,7 @@ class Plex(Integration):
             "state": player.get("state", "playing"),
         }
 
-    def info(self, client):
+    def info(self, client: Client) -> Info:
         ident = (client.json("/identity") or {}).get("MediaContainer") or {}
         version = (ident.get("version") or "").split("-")[0] or None
         extra = {}
@@ -354,7 +392,18 @@ class Kometa(Integration):
     needs_port = False
 
     @staticmethod
-    def parse_log(text, mtime, now=None):
+    def parse_log(text: str, mtime: float, now: float | None = None) -> tuple[str, bool]:
+        """Summarises the tail of a Kometa meta.log.
+
+        Args:
+            text: The end of the log file.
+            mtime: When the log was last written; a recent write without a
+                "Finished Run" line means a run is in progress.
+            now: Current time, for tests.
+
+        Returns:
+            ``(status, running)``, e.g. ``("Last run today 03:59 · took 59m", False)``.
+        """
         now = time.time() if now is None else now
         if now - mtime < 120 and "Finished Run" not in text[-4000:]:
             return "Running now", True
@@ -367,7 +416,7 @@ class Kometa(Integration):
         day = day_label(datetime.strptime(end_date, "%Y-%m-%d"), datetime.fromtimestamp(now))
         return f"Last run {day} {end_time} · took {took}", False
 
-    def local_status(self, svc):
+    def local_status(self, svc: Service) -> tuple[str, bool] | None:
         path = svc.get("log")
         if not path:
             return 'Set "log" to Kometa\'s meta.log', False
@@ -394,7 +443,7 @@ KINDS = {
 }
 
 
-def is_scheduled(svc):
+def is_scheduled(svc: Service) -> bool:
     """True for services that are checked locally instead of over HTTP.
 
     These are kinds that need no port (Kometa) and that the user has not given
@@ -403,7 +452,7 @@ def is_scheduled(svc):
     return not KINDS[svc["kind"]].needs_port and not svc.get("port")
 
 
-def kinds_info():
+def kinds_info() -> dict[str, dict[str, Any]]:
     """Kind metadata for the settings UI's Kind dropdown and API key hints."""
     return {
         name: {"label": k.label, "needsPort": k.needs_port, "defaultPort": k.default_port, "keyHint": k.key_hint}
