@@ -4,6 +4,11 @@ All notable changes are listed here. The format follows [Keep a Changelog](https
 
 ## [Unreleased]
 
+### Fixed
+
+- qBittorrent: a wrong username/password is no longer retried on every poll, which could get pi-hub's IP banned by qBittorrent. The card now says "Login failed — check username and password".
+- An invalid `pollSeconds` value now gives a clear config error instead of a crash.
+
 ## [0.1.0] - 2026-10-01
 
 ### Added

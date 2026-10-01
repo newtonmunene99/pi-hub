@@ -169,5 +169,70 @@ class KometaTests(unittest.TestCase):
         self.assertEqual(Kometa().read({"log": "/nonexistent/meta.log"}), ("Log not found", False))
 
 
+class FakeQBittorrent(BaseHTTPRequestHandler):
+    """Cookie-authenticated like the real Web API: login gives a SID, else 403."""
+
+    password = "right"
+    logins: ClassVar[list] = []
+
+    def log_message(self, *a):
+        pass
+
+    def do_POST(self):
+        form = urllib.parse.parse_qs(self.rfile.read(int(self.headers["Content-Length"])).decode())
+        FakeQBittorrent.logins.append(form["password"][0])
+        ok = form["password"] == [self.password]
+        self.send_response(200)
+        if ok:
+            self.send_header("Set-Cookie", "SID=abc; HttpOnly; path=/")
+        self.end_headers()
+        self.wfile.write(b"Ok." if ok else b"Fails.")
+
+    def do_GET(self):
+        if "SID=abc" not in self.headers.get("Cookie", ""):
+            self.send_response(403)
+            self.end_headers()
+            return
+        body = {"/api/v2/transfer/info": {"dl_info_speed": 0}, "/api/v2/app/version": None}
+        path = urllib.parse.urlparse(self.path).path
+        self.send_response(200)
+        self.end_headers()
+        self.wfile.write(b"v5.1.0" if path == "/api/v2/app/version" else json.dumps(body.get(path, [])).encode())
+
+
+class QBittorrentLoginTests(unittest.TestCase):
+    def setUp(self):
+        FakeQBittorrent.logins = []
+        self.server = ThreadingHTTPServer(("127.0.0.1", 0), FakeQBittorrent)
+        threading.Thread(target=self.server.serve_forever, daemon=True).start()
+        self.addCleanup(self.server.server_close)
+        self.addCleanup(self.server.shutdown)
+
+    def client(self, password):
+        port = str(self.server.server_address[1])
+        return Client({"id": "q", "kind": "qbittorrent", "port": port, "username": "admin", "password": password})
+
+    def test_correct_password_logs_in_once(self):
+        c, qbit = self.client("right"), KINDS["qbittorrent"]
+        for _ in range(3):
+            self.assertEqual(qbit.stats(c, Context()), "↓ 0 MB/s · 0 active")
+        self.assertEqual(FakeQBittorrent.logins, ["right"])
+        self.assertEqual(qbit.info(c)["version"], "5.1.0")
+
+    def test_wrong_password_is_not_retried(self):
+        # qBittorrent bans an IP after 5 failed logins; pi-hub must not get there.
+        c, qbit = self.client("wrong"), KINDS["qbittorrent"]
+        for _ in range(10):
+            self.assertEqual(qbit.stats(c, Context()), qbit.LOGIN_FAILED)
+        qbit.info(c)
+        self.assertEqual(len(FakeQBittorrent.logins), 1)
+
+    def test_new_credentials_get_a_fresh_attempt(self):
+        qbit = KINDS["qbittorrent"]
+        qbit.stats(self.client("wrong"), Context())
+        self.assertEqual(qbit.stats(self.client("right"), Context()), "↓ 0 MB/s · 0 active")
+        self.assertEqual(FakeQBittorrent.logins, ["wrong", "right"])
+
+
 if __name__ == "__main__":
     unittest.main()
