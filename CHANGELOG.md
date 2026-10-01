@@ -8,6 +8,11 @@ All notable changes are listed here. The format follows [Keep a Changelog](https
 
 - qBittorrent: a wrong username/password is no longer retried on every poll, which could get pi-hub's IP banned by qBittorrent. The card now says "Login failed — check username and password".
 - An invalid `pollSeconds` value now gives a clear config error instead of a crash.
+- The download speed in the sidebar could occasionally lose an update when qBittorrent and SABnzbd were polled at the same time.
+
+### Changed
+
+- Integration API: `stats(client, info)` now *returns* its findings (a string, or a `Report` with sidebar data) instead of writing to a shared context, and integrations declare the sidebar sections they fill with `provides`. New media or download integrations get the sidebar without changes to the hub. See CONTRIBUTING.md.
 
 ## [0.1.0] - 2026-10-01
 

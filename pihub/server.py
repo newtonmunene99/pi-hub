@@ -14,6 +14,7 @@ import json
 import os
 import urllib.parse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from typing import Protocol
 
 from .config import ConfigError
 
@@ -39,7 +40,17 @@ SECURITY_HEADERS = {
 }
 
 
-def make_handler(hub, password="", readonly=False):
+class HubAPI(Protocol):
+    """What the HTTP layer needs from a hub. ``hub.Hub`` and ``demo.DemoHub`` both fit."""
+
+    def state(self) -> dict: ...
+
+    def settings(self) -> dict: ...
+
+    def update_services(self, payload: dict) -> list[str]: ...
+
+
+def make_handler(hub: HubAPI, password="", readonly=False):
     class Handler(BaseHTTPRequestHandler):
         server_version = "pi-hub"
         sys_version = ""
@@ -113,7 +124,7 @@ def make_handler(hub, password="", readonly=False):
     return Handler
 
 
-def serve(hub, host="0.0.0.0", port=8000, password="", readonly=False):
+def serve(hub: HubAPI, host="0.0.0.0", port=8000, password="", readonly=False):
     httpd = ThreadingHTTPServer((host, port), make_handler(hub, password, readonly))
     httpd.daemon_threads = True
     return httpd

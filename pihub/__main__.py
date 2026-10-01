@@ -17,7 +17,7 @@ import threading
 
 from . import __version__
 from .config import ConfigError
-from .server import serve
+from .server import HubAPI, serve
 
 
 def main():
@@ -26,6 +26,7 @@ def main():
     password = os.environ.get("PIHUB_PASSWORD", "")
     readonly = os.environ.get("PIHUB_READONLY", "") in ("1", "true", "yes")
 
+    hub: HubAPI
     if os.environ.get("PIHUB_DEMO", "") in ("1", "true", "yes"):
         from .demo import DemoHub
 
@@ -36,11 +37,12 @@ def main():
         config_path = os.environ.get("PIHUB_CONFIG", "/config/config.json")
         history_path = os.environ.get("PIHUB_HISTORY", os.path.join(os.path.dirname(config_path), "history.json"))
         try:
-            hub = Hub(config_path, history_path)
+            real_hub = Hub(config_path, history_path)
         except ConfigError as e:
             print(f"pi-hub: {e}", file=sys.stderr)
             sys.exit(2)
-        threading.Thread(target=hub.run_forever, daemon=True).start()
+        threading.Thread(target=real_hub.run_forever, daemon=True).start()
+        hub = real_hub
 
     httpd = serve(hub, host, port, password, readonly)
     mode = " (demo)" if os.environ.get("PIHUB_DEMO") else ""
