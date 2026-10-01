@@ -62,7 +62,10 @@ class HubPollTests(unittest.TestCase):
                 {"name": "Radarr", "kind": "radarr", "port": self.port, "apiKey": "k"},
             ]
         )
-        hub.poll_once()
+        with self.assertLogs("pihub.hub", "ERROR") as logs:
+            hub.poll_once()
+        self.assertIn("Broken: stats failed", logs.output[0])
+        self.assertIn("RuntimeError: bug in an integration", "\n".join(logs.output))
         services = {s["id"]: s for s in hub.state()["services"]}
         self.assertTrue(services["broken"]["up"])
         self.assertRegex(services["broken"]["stat"], r"^Online · \d+ ms$")

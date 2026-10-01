@@ -14,7 +14,7 @@ import json
 import os
 import urllib.parse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from typing import Protocol
+from typing import Any, Protocol
 
 from .config import ConfigError
 
@@ -50,15 +50,19 @@ class HubAPI(Protocol):
     def update_services(self, payload: dict) -> list[str]: ...
 
 
-def make_handler(hub: HubAPI, password="", readonly=False):
+def make_handler(hub: HubAPI, password: str = "", readonly: bool = False) -> type[BaseHTTPRequestHandler]:
+    """Builds the request handler class bound to one hub and its access settings."""
+
     class Handler(BaseHTTPRequestHandler):
         server_version = "pi-hub"
         sys_version = ""
 
-        def log_message(self, *args):
+        def log_message(self, format: str, *args: Any) -> None:
+            """Silences the default per-request stderr log."""
             pass
 
-        def send(self, code, body, ctype="application/json", cache="no-store"):
+        def send(self, code: int, body: object, ctype: str = "application/json", cache: str = "no-store") -> None:
+            """Sends a response with the security headers; ``body`` is bytes or JSON-able."""
             data = body if isinstance(body, bytes) else json.dumps(body).encode()
             self.send_response(code)
             self.send_header("Content-Type", ctype)
@@ -70,16 +74,17 @@ def make_handler(hub: HubAPI, password="", readonly=False):
             if self.command != "HEAD":
                 self.wfile.write(data)
 
-        def authorised(self):
+        def authorised(self) -> bool:
+            """True if no password is set or the Bearer token matches (constant-time)."""
             if not password:
                 return True
             supplied = self.headers.get("Authorization", "").removeprefix("Bearer ").strip()
             return hmac.compare_digest(supplied.encode(), password.encode())
 
-        def do_HEAD(self):
+        def do_HEAD(self) -> None:
             self.do_GET()
 
-        def do_GET(self):
+        def do_GET(self) -> None:
             path = urllib.parse.urlparse(self.path).path
             if path == "/api/health":
                 return self.send(200, {"ok": True})
@@ -91,7 +96,7 @@ def make_handler(hub: HubAPI, password="", readonly=False):
                 return self.send(200, {**hub.settings(), "readonly": readonly})
             return self.static(path)
 
-        def do_POST(self):
+        def do_POST(self) -> None:
             if urllib.parse.urlparse(self.path).path != "/api/config":
                 return self.send(404, {"error": "Not found"})
             if readonly:
@@ -110,7 +115,8 @@ def make_handler(hub: HubAPI, password="", readonly=False):
             except (ConfigError, ValueError) as e:
                 return self.send(400, {"error": str(e)})
 
-        def static(self, path):
+        def static(self, path: str) -> None:
+            """Serves a file from STATIC_DIR, refusing anything that resolves outside it."""
             name = "index.html" if path in ("/", "") else path.lstrip("/")
             root = os.path.realpath(STATIC_DIR)
             full = os.path.realpath(os.path.join(root, name))
@@ -124,7 +130,10 @@ def make_handler(hub: HubAPI, password="", readonly=False):
     return Handler
 
 
-def serve(hub: HubAPI, host="0.0.0.0", port=8000, password="", readonly=False):
+def serve(
+    hub: HubAPI, host: str = "0.0.0.0", port: int = 8000, password: str = "", readonly: bool = False
+) -> ThreadingHTTPServer:
+    """Creates (but does not start) the HTTP server; call ``serve_forever`` on it."""
     httpd = ThreadingHTTPServer((host, port), make_handler(hub, password, readonly))
     httpd.daemon_threads = True
     return httpd

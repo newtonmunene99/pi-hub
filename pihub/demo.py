@@ -8,6 +8,7 @@ import random
 import threading
 import time
 import zlib
+from typing import Any
 
 from . import config as cfgmod
 from .hub import service_view, settings_view, state_view
@@ -112,21 +113,24 @@ VERSIONS = {
 
 
 class DemoHub:
-    def __init__(self):
+    """Fake hub for ``PIHUB_DEMO=1``: a fixed service list with jittered numbers."""
+
+    def __init__(self) -> None:
         self.cfg = cfgmod.normalise(DEMO_CONFIG)
         self.lock = threading.Lock()
         self.started = time.time()
 
-    def update_services(self, payload):
+    def update_services(self, payload: dict[str, Any]) -> list[str]:
+        """Applies a settings edit in memory only."""
         with self.lock:
             self.cfg, notices = cfgmod.apply_update(self.cfg, payload)
         return notices
 
-    def settings(self):
+    def settings(self) -> dict[str, Any]:
         with self.lock:
             return settings_view(self.cfg)
 
-    def state(self):
+    def state(self) -> dict[str, Any]:
         rng = random.Random(int(time.time() // 15))  # noqa: S311 - jitter for fake demo data
         services = []
         for svc in self.cfg["services"]:
