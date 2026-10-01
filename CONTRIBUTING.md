@@ -57,12 +57,12 @@ An integration teaches pi-hub to show a useful status line for one app. Most are
    class Jellyfin(Integration):
        label = "Jellyfin"
        default_port = "8096"
-       probe_path = "/health"             # cheap URL that answers when the app is up
+       probe_path = "/health"  # cheap URL that answers when the app is up
        key_hint = "Dashboard → API Keys"  # where users find the key
 
        def stats(self, client, ctx):
            if not client.api_key:
-               return None                # no key: card shows "Online · 12 ms"
+               return None  # no key: card shows "Online · 12 ms"
            sessions = client.json("/Sessions", {"X-Emby-Token": client.api_key})
            if sessions is None:
                return None
