@@ -41,7 +41,7 @@ ghcr.io/newtonmunene99/pi-hub
 | Tag | Updates to |
 |---|---|
 | `0.3` | the latest `0.3.x` bug-fix release — **recommended** |
-| `0.3.0` | exactly that release, never changes |
+| `0.3.1` | exactly that release, never changes |
 | `latest` | the newest release, including new minor versions |
 
 Without Compose, the same setup as the example above:

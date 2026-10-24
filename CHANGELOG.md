@@ -4,6 +4,8 @@ All notable changes are listed here. The format follows [Keep a Changelog](https
 
 ## [Unreleased]
 
+## [0.3.1] - 2026-10-24
+
 ### Fixed
 
 - Host panel: when Claude refuses to start (for example, the folder is already served by another Remote Control session), the panel now shows the error right away instead of listing a session that exits a minute later.
