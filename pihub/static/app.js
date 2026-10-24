@@ -140,6 +140,7 @@ function render() {
   if (!data) return;
   renderHeader(); renderStats(); renderPinned(); renderCats(); renderGrid(); renderSide(); renderModal();
   $('#tab-set').hidden = !!data.readonly;
+  $('#tab-host').hidden = !data.hostAgent || !!data.readonly;
 }
 
 async function refresh() {
@@ -285,6 +286,106 @@ $('#save').addEventListener('click', async () => {
 });
 $('#unlock').addEventListener('click', () => { setToken($('#pw').value); $('#pw').value = ''; $('#lockmsg').textContent = 'Checking…'; loadSettings().then(() => { $('#lockmsg').textContent = $('#lock').hidden ? '' : 'Wrong password.'; }); });
 $('#pw').addEventListener('keydown', e => { if (e.key === 'Enter') $('#unlock').click(); });
+
+/* ── host: restart and Claude sessions (needs the host agent) ── */
+let hostState = null, hostDirs = null, hostPath = '', hostMsg = null, hostBusy = false, rebootArmed = null;
+
+async function hostApi(path, body) {
+  const opts = body === undefined ? { cache: 'no-store', headers: authHeaders() }
+    : { method: 'POST', headers: { 'Content-Type': 'application/json', ...authHeaders() }, body: JSON.stringify(body) };
+  const r = await fetch(path, opts);
+  const out = await r.json().catch(() => ({}));
+  if (r.status === 401) throw Object.assign(new Error('Settings are locked — unlock them in Settings first.'), { locked: true });
+  if (!r.ok) throw new Error(out.error || `Request failed (${r.status})`);
+  return out;
+}
+
+async function openHost() {
+  $('#hostmodal').hidden = false;
+  hostMsg = null;
+  await loadHost(hostPath);
+  $('#hostmodal [data-hclose]')?.focus();
+}
+
+function closeHost() { $('#hostmodal').hidden = true; $('#hostmodal').innerHTML = ''; clearTimeout(rebootArmed); rebootArmed = null; }
+
+async function loadHost(path) {
+  try {
+    [hostState, hostDirs] = await Promise.all([hostApi('api/host'), hostApi(`api/host/dirs?path=${encodeURIComponent(path)}`)]);
+    hostPath = hostDirs.path;
+  } catch (e) {
+    if (!hostState || e.locked) { hostState = null; hostDirs = null; }
+    hostMsg = { err: true, text: e.message, locked: !!e.locked };
+    if (path && !e.locked) return loadHost('');  // folder vanished: fall back to the root
+  }
+  renderHost();
+}
+
+const crumbs = path => [['~', ''], ...path.split('/').filter(Boolean).map((p, i, a) => [p, a.slice(0, i + 1).join('/')])];
+const ago = t => { const m = Math.round((Date.now() / 1000 - t) / 60); return m < 1 ? 'just now' : m < 60 ? `${m} min ago` : `${Math.round(m / 60)} h ago`; };
+
+function renderHost() {
+  const m = $('#hostmodal');
+  if (m.hidden) return;
+  const st = hostState, msg = hostMsg ? `<div class="notice${hostMsg.err ? ' err' : ''}">${esc(hostMsg.text)}${hostMsg.locked ? ' <a href="#settings" data-hclose class="lnk">Open Settings</a>' : ''}</div>` : '';
+  let body = '';
+  if (st) {
+    const sessions = st.sessions.length ? st.sessions.map(s => `
+      <div class="sess"><div class="ell"><div class="ell">${esc(s.name)}</div><div class="muted ell">~/${esc(s.path)} · ${esc(ago(s.started))}</div></div>
+        ${s.url ? `<a class="btn-out" href="${esc(s.url)}" target="_blank" rel="noopener noreferrer">Open</a>` : ''}
+        <button class="btn-ghost" data-hstop="${esc(s.id)}"${hostBusy ? ' disabled' : ''}>Stop</button></div>`).join('')
+      : '<div class="note">No sessions started from here.</div>';
+    const dirs = hostDirs ? hostDirs.dirs.map(d => `<button class="dir" data-hdir="${esc(hostPath ? hostPath + '/' + d : d)}">${esc(d)}</button>`).join('')
+      + (hostDirs.more ? '<div class="note">Showing the first 500 folders.</div>' : '') || '<div class="note">No subfolders.</div>' : '';
+    const crumb = crumbs(hostPath).map(([n, p], i, a) => i === a.length - 1 ? `<b>${esc(n)}</b>` : `<button class="lnk" data-hdir="${esc(p)}">${esc(n)}</button>`).join(' / ');
+    body = `
+      ${st.claude ? `<section><h2 class="label">Claude sessions</h2>${sessions}</section>
+      <section><h2 class="label">Start Claude Code in</h2>
+        <div class="crumb">${crumb}</div>
+        <div class="dirs">${dirs}</div>
+        <div class="actions"><button class="btn-out btn-fill" data-hstart${hostBusy ? ' disabled' : ''}>${hostBusy === 'start' ? 'Starting…' : 'Start Claude here'}</button></div>
+        <div class="note">Runs <code>claude remote-control</code> — continue from the Claude app or claude.ai/code.</div></section>` : ''}
+      ${st.reboot ? `<section class="power"><div><h2 class="label">Power</h2><div class="note">Services go offline for a minute or two.</div></div>
+        <button class="btn-out danger${rebootArmed ? ' armed' : ''}" data-hreboot${hostBusy ? ' disabled' : ''}>${rebootArmed ? 'Tap again to restart' : 'Restart'}</button></section>` : ''}`;
+  }
+  m.innerHTML = `
+    <div class="modal host" role="dialog" aria-modal="true" aria-labelledby="hname">
+      <div class="hd"><div style="flex:1;min-width:0"><div class="n" id="hname">Host</div><div class="muted" style="font-size:12px">${esc(host)}</div></div>
+        <button class="x" data-hclose title="Close" aria-label="Close">×</button></div>
+      ${msg}${body}
+    </div>`;
+}
+
+async function hostDo(kind, fn) {
+  hostBusy = kind; hostMsg = null; renderHost();
+  try { hostMsg = await fn(); } catch (e) { hostMsg = { err: true, text: e.message, locked: !!e.locked }; }
+  hostBusy = false;
+  if (kind !== 'reboot' || hostMsg?.err) { try { hostState = await hostApi('api/host'); } catch (e) { /* keep last */ } }
+  renderHost();
+}
+
+$('#tab-host').addEventListener('click', e => { e.preventDefault(); openHost(); });
+$('#hostmodal').addEventListener('click', e => {
+  if (e.target.closest('[data-hclose]') || e.target.id === 'hostmodal') { closeHost(); return; }
+  const dir = e.target.closest('[data-hdir]');
+  if (dir) { hostMsg = null; loadHost(dir.dataset.hdir); return; }
+  if (e.target.closest('[data-hstart]')) {
+    hostDo('start', async () => {
+      const { session } = await hostApi('api/host/claude', { path: hostPath });
+      if (session.url) window.open(session.url, '_blank', 'noopener');
+      return { text: `Started “${session.name}”. It's listed under Claude sessions in the Claude app.` };
+    });
+    return;
+  }
+  const stop = e.target.closest('[data-hstop]');
+  if (stop) { hostDo('stop', async () => { await hostApi('api/host/stop', { id: stop.dataset.hstop }); return { text: 'Session stopped.' }; }); return; }
+  if (e.target.closest('[data-hreboot]')) {
+    if (!rebootArmed) { rebootArmed = setTimeout(() => { rebootArmed = null; renderHost(); }, 4000); renderHost(); return; }
+    clearTimeout(rebootArmed); rebootArmed = null;
+    hostDo('reboot', async () => { await hostApi('api/host/reboot', {}); return { text: 'Restarting… this page will show data again once the Pi is back.' }; });
+  }
+});
+document.addEventListener('keydown', e => { if (e.key === 'Escape' && !$('#hostmodal').hidden) closeHost(); });
 
 /* ── routing ── */
 function route() {

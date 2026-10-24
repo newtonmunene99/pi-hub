@@ -108,6 +108,66 @@ pi-hub needs to reach each service, and it reads host stats from `/proc` and `/s
 - **Bridge networking:** publish `8000:8000` and set each service's `host` to your server's LAN IP (or a container name on a shared Docker network).
 - **Other machines:** set `host` (and `scheme`/`port`) per service.
 
+## Host actions: restart and Claude Code (optional)
+
+With the **host agent** running, a **Host** link appears in the header. It opens a panel where you can:
+
+- **Restart** the machine (tap twice to confirm).
+- **Start [Claude Code](https://claude.com/claude-code)** in any folder under your home directory. It runs `claude remote-control`, so you can carry on from the Claude mobile app or claude.ai/code without SSH. Sessions started here are listed with *Open* and *Stop* buttons.
+
+pi-hub usually runs in a container, which can't do either of these itself. The agent is a small part of pi-hub that runs **on the host, as your user**, and listens on a unix socket that you mount into the container. Without it, nothing changes.
+
+**1. Run the agent on the host** (Python 3.11+, from a checkout of this repo). Save this as `/etc/systemd/system/pihub-agent.service`, replacing `you` and the path:
+
+```ini
+[Unit]
+Description=pi-hub host agent
+After=network-online.target
+
+[Service]
+User=you
+ExecStart=/usr/bin/python3 -m pihub.hostagent
+WorkingDirectory=/home/you/pi-hub
+RuntimeDirectory=pihub-agent
+RuntimeDirectoryPreserve=yes
+# Keep Claude sessions running when the agent restarts.
+KillMode=process
+Restart=on-failure
+
+[Install]
+WantedBy=multi-user.target
+```
+
+```sh
+sudo systemctl daemon-reload && sudo systemctl enable --now pihub-agent
+```
+
+**2. Mount the socket's folder into the container** and point pi-hub at it:
+
+```yaml
+    environment:
+      - PIHUB_AGENT_SOCKET=/run/pihub-agent/agent.sock
+    volumes:
+      - /run/pihub-agent:/run/pihub-agent
+```
+
+The socket is only accessible to its owner and group, and the image runs as UID 1000. If your host user isn't UID 1000, set `user: "<uid>:<gid>"` on the container.
+
+**Requirements on the host:**
+
+- *Restart* runs `sudo -n systemctl reboot`, so your user needs passwordless sudo for that command, e.g. `you ALL=(root) NOPASSWD: /usr/bin/systemctl reboot` in `/etc/sudoers.d/pihub`.
+- *Claude Code* must be installed and signed in for your user. `claude remote-control` only starts in folders you have trusted: run `claude` once in your home folder (or the folder you want) and accept the prompt, and its subfolders are trusted too. If a folder isn't trusted, the panel shows Claude's error.
+
+| Agent variable | Default | |
+|---|---|---|
+| `PIHUB_AGENT_SOCKET` | `/run/pihub-agent/agent.sock` | socket path |
+| `PIHUB_AGENT_ROOT` | your home directory | the folder picker can't go above this |
+| `PIHUB_AGENT_STATE` | `~/.local/state/pihub` | session list and logs |
+| `PIHUB_AGENT_CLAUDE` | `claude` | Claude Code executable; empty turns sessions off |
+| `PIHUB_AGENT_REBOOT` | `sudo -n systemctl reboot` | reboot command; empty turns restart off |
+
+**Security:** anyone who can open the dashboard can use these buttons, so set `PIHUB_PASSWORD`. The panel then asks for the settings password. `PIHUB_READONLY=1` turns host actions off. The endpoints only accept JSON, so another website can't trigger them from your browser. Sessions run under *your* Claude account, so only you can work in them, but anyone who can use the panel can start or stop them.
+
 ## Environment variables
 
 See the table in the [README](../README.md#environment-variables).

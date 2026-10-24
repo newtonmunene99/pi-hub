@@ -13,6 +13,7 @@ services:
       - PIHUB_PORT=8000
       # - PIHUB_PASSWORD=change-me # protect the settings page
       # - PIHUB_READONLY=1         # or disable editing entirely
+      # - PIHUB_AGENT_SOCKET=/run/pihub-agent/agent.sock   # restart + Claude Code buttons (docs/configuration.md)
       # API keys referenced from config.json as "env:NAME":
       - PLEX_TOKEN=${PLEX_TOKEN:-}
       - SONARR_API_KEY=${SONARR_API_KEY:-}
@@ -24,3 +25,4 @@ services:
       - /mnt/media:/disks/media:ro             # one line per disk in "system.disks"
       - /path/to/kometa/config/logs:/kometa-logs:ro   # only if you use the kometa kind
       # - /etc/argononed.conf:/argononed.conf:ro      # Argon ONE fan curve
+      # - /run/pihub-agent:/run/pihub-agent           # only with the host agent

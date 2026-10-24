@@ -5,8 +5,15 @@
   GET  /api/config   services for the settings page (secrets masked)
   POST /api/config   save services edited in the settings page
 
-Settings endpoints can be protected with PIHUB_PASSWORD (sent by the UI as a
-Bearer token) or disabled with PIHUB_READONLY=1.
+With a host agent (PIHUB_AGENT_SOCKET, see hostagent.py):
+  GET  /api/host          agent status and running Claude sessions
+  GET  /api/host/dirs     folders to start a session in (?path=)
+  POST /api/host/claude   start a session ({"path", "name"})
+  POST /api/host/stop     stop a session ({"id"})
+  POST /api/host/reboot   restart the machine
+
+Settings and host endpoints can be protected with PIHUB_PASSWORD (sent by the
+UI as a Bearer token); PIHUB_READONLY=1 disables every POST.
 """
 
 import hmac
@@ -17,6 +24,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any, Protocol
 
 from .config import ConfigError
+from .hostagent import AgentClient, AgentError
 
 STATIC_DIR = os.path.join(os.path.dirname(__file__), "static")
 MAX_BODY = 200_000
@@ -28,6 +36,12 @@ CONTENT_TYPES = {
     "png": "image/png",
     "woff2": "font/woff2",
     "txt": "text/plain; charset=utf-8",
+}
+# POST path -> (agent action, body fields passed through)
+HOST_ACTIONS = {
+    "/api/host/claude": ("start", ("path", "name")),
+    "/api/host/stop": ("stop", ("id",)),
+    "/api/host/reboot": ("reboot", ()),
 }
 SECURITY_HEADERS = {
     "X-Content-Type-Options": "nosniff",
@@ -50,7 +64,9 @@ class HubAPI(Protocol):
     def update_services(self, payload: dict) -> list[str]: ...
 
 
-def make_handler(hub: HubAPI, password: str = "", readonly: bool = False) -> type[BaseHTTPRequestHandler]:
+def make_handler(
+    hub: HubAPI, password: str = "", readonly: bool = False, agent: AgentClient | None = None
+) -> type[BaseHTTPRequestHandler]:
     """Builds the request handler class bound to one hub and its access settings."""
 
     class Handler(BaseHTTPRequestHandler):
@@ -85,19 +101,32 @@ def make_handler(hub: HubAPI, password: str = "", readonly: bool = False) -> typ
             self.do_GET()
 
         def do_GET(self) -> None:
-            path = urllib.parse.urlparse(self.path).path
+            url = urllib.parse.urlparse(self.path)
+            path = url.path
             if path == "/api/health":
                 return self.send(200, {"ok": True})
             if path == "/api/state":
-                return self.send(200, {**hub.state(), "readonly": readonly, "locked": bool(password)})
+                state = {**hub.state(), "readonly": readonly, "locked": bool(password), "hostAgent": bool(agent)}
+                return self.send(200, state)
             if path == "/api/config":
                 if not self.authorised():
                     return self.send(401, {"error": "Password required"})
                 return self.send(200, {**hub.settings(), "readonly": readonly})
+            if path in ("/api/host", "/api/host/dirs"):
+                if not agent:
+                    return self.send(404, {"error": "No host agent configured"})
+                if not self.authorised():
+                    return self.send(401, {"error": "Password required"})
+                if path == "/api/host":
+                    return self.host_call("status")
+                rel = urllib.parse.parse_qs(url.query).get("path", [""])[0]
+                return self.host_call("list", path=rel)
             return self.static(path)
 
         def do_POST(self) -> None:
-            if urllib.parse.urlparse(self.path).path != "/api/config":
+            path = urllib.parse.urlparse(self.path).path
+            host_action = HOST_ACTIONS.get(path)
+            if path != "/api/config" and not (host_action and agent):
                 return self.send(404, {"error": "Not found"})
             if readonly:
                 return self.send(403, {"error": "Settings are read-only (PIHUB_READONLY is set)"})
@@ -110,10 +139,26 @@ def make_handler(hub: HubAPI, password: str = "", readonly: bool = False) -> typ
                 length = int(self.headers.get("Content-Length", 0))
                 if length > MAX_BODY:
                     return self.send(413, {"error": "Request too large"})
-                notices = hub.update_services(json.loads(self.rfile.read(length)))
+                body = json.loads(self.rfile.read(length) or b"{}")
+                if host_action:
+                    if not isinstance(body, dict):
+                        raise ValueError("Expected a JSON object")
+                    params = {k: str(body.get(k, "")) for k in host_action[1]}
+                    return self.host_call(host_action[0], **params)
+                notices = hub.update_services(body)
                 return self.send(200, {**hub.settings(), "readonly": readonly, "notices": notices})
             except (ConfigError, ValueError) as e:
                 return self.send(400, {"error": str(e)})
+
+        def host_call(self, action: str, **params: str) -> None:
+            """Forwards one request to the host agent; its refusals come back as 400s."""
+            if agent is None:
+                return self.send(404, {"error": "No host agent configured"})
+            try:
+                return self.send(200, agent.call(action, **params))
+            except AgentError as e:
+                code = 502 if str(e).startswith("Host agent") else 400
+                return self.send(code, {"error": str(e)})
 
         def static(self, path: str) -> None:
             """Serves a file from STATIC_DIR, refusing anything that resolves outside it."""
@@ -131,9 +176,14 @@ def make_handler(hub: HubAPI, password: str = "", readonly: bool = False) -> typ
 
 
 def serve(
-    hub: HubAPI, host: str = "0.0.0.0", port: int = 8000, password: str = "", readonly: bool = False
+    hub: HubAPI,
+    host: str = "0.0.0.0",
+    port: int = 8000,
+    password: str = "",
+    readonly: bool = False,
+    agent: AgentClient | None = None,
 ) -> ThreadingHTTPServer:
     """Creates (but does not start) the HTTP server; call ``serve_forever`` on it."""
-    httpd = ThreadingHTTPServer((host, port), make_handler(hub, password, readonly))
+    httpd = ThreadingHTTPServer((host, port), make_handler(hub, password, readonly, agent))
     httpd.daemon_threads = True
     return httpd

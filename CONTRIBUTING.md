@@ -44,6 +44,7 @@ pihub/
   integrations.py  one class per supported app (kind)
   system.py        CPU / memory / temperature / fan / disk stats
   schedule.py      "next run" sidebar entries
+  hostagent.py     optional host-side agent: reboot, Claude Code sessions
   demo.py          fake data for PIHUB_DEMO=1
   static/          the UI
 tests/             unittest suites (stdlib only)

@@ -14,7 +14,7 @@
 <header class="top">
   <div class="brand"><i></i><span id="title">pi-hub</span></div>
   <span class="chip" id="host"></span>
-  <nav class="tabs"><a href="#" id="tab-dash">Dashboard</a><a href="#settings" id="tab-set">Settings</a></nav>
+  <nav class="tabs"><a href="#" id="tab-dash">Dashboard</a><a href="#settings" id="tab-set">Settings</a><a href="#" id="tab-host" hidden>Host</a></nav>
   <div class="search"><input id="q" type="search" autocomplete="off" placeholder="Jump to service or port…" aria-label="Jump to service or port"></div>
   <div class="meta"><span>Uptime <b id="uptime">—</b></span><span><i class="dot" id="sumdot"></i><span id="summary">—</span></span></div>
 </header>
@@ -60,6 +60,7 @@
 </main>
 
 <div class="backdrop" id="modal" hidden></div>
+<div class="backdrop" id="hostmodal" hidden></div>
 <script src="app.js"></script>
 </body>
 </html>

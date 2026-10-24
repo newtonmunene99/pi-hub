@@ -110,6 +110,7 @@ Want another app? See [adding an integration](CONTRIBUTING.md#adding-an-integrat
 | `PIHUB_HOST` | `0.0.0.0` | bind address |
 | `PIHUB_PASSWORD` | — | require a password for the settings page |
 | `PIHUB_READONLY` | — | `1` disables editing in the UI |
+| `PIHUB_AGENT_SOCKET` | — | host agent socket: enables the restart and Claude Code buttons ([setup](docs/configuration.md#host-actions-restart-and-claude-code-optional)) |
 | `PIHUB_DEMO` | — | `1` serves fake data |
 | `PIHUB_LOG_LEVEL` | `INFO` | `DEBUG`, `INFO`, `WARNING` or `ERROR` |
 | `TZ` | `UTC` | timezone for the schedule |

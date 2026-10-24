@@ -7,6 +7,7 @@ Environment variables:
   PIHUB_PORT      port                           (default 8000)
   PIHUB_PASSWORD  require this password to view/edit settings
   PIHUB_READONLY  "1" to disable editing settings in the UI
+  PIHUB_AGENT_SOCKET host agent socket: enables the restart and Claude buttons (see hostagent.py)
   PIHUB_DEMO      "1" to serve fake data (no config needed) - for UI work and screenshots
   PIHUB_LOG_LEVEL DEBUG, INFO, WARNING or ERROR  (default INFO)
 """
@@ -19,6 +20,7 @@ import threading
 
 from . import __version__
 from .config import ConfigError
+from .hostagent import AgentClient
 from .server import HubAPI, serve
 
 
@@ -52,7 +54,9 @@ def main() -> None:
         threading.Thread(target=real_hub.run_forever, daemon=True).start()
         hub = real_hub
 
-    httpd = serve(hub, host, port, password, readonly)
+    socket_path = os.environ.get("PIHUB_AGENT_SOCKET", "")
+    agent = AgentClient(socket_path) if socket_path else None
+    httpd = serve(hub, host, port, password, readonly, agent)
     mode = " (demo)" if os.environ.get("PIHUB_DEMO") else ""
     logger.info("pi-hub %s%s listening on http://%s:%s", __version__, mode, host, port)
     with contextlib.suppress(KeyboardInterrupt):
