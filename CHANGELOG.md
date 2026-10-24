@@ -4,6 +4,8 @@ All notable changes are listed here. The format follows [Keep a Changelog](https
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-10-24
+
 ### Added
 
 - Optional host agent (`python3 -m pihub.hostagent`) and a **Host** panel: restart the machine, and start or stop Claude Code sessions (`claude remote-control`) in a folder you pick under your home directory. Off unless `PIHUB_AGENT_SOCKET` is set; see *Host actions* in docs/configuration.md.
