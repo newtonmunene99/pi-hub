@@ -156,7 +156,7 @@ The socket is only accessible to its owner and group, and the image runs as UID 
 **Requirements on the host:**
 
 - *Restart* runs `sudo -n systemctl reboot`, so your user needs passwordless sudo for that command, e.g. `you ALL=(root) NOPASSWD: /usr/bin/systemctl reboot` in `/etc/sudoers.d/pihub`.
-- *Claude Code* must be installed and signed in for your user. `claude remote-control` only starts in folders you have trusted: run `claude` once in your home folder (or the folder you want) and accept the prompt, and its subfolders are trusted too. If a folder isn't trusted, the panel shows Claude's error.
+- *Claude Code* must be installed and signed in for your user. `claude remote-control` only starts in folders you have trusted: run `claude` once in a project folder and accept the prompt, and its subfolders are trusted too. Claude never saves trust for the home directory itself, so pick a folder inside it. Only one Remote Control session can serve a folder at a time. If Claude refuses to start, the panel shows its error.
 
 | Agent variable | Default | |
 |---|---|---|

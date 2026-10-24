@@ -4,6 +4,12 @@ All notable changes are listed here. The format follows [Keep a Changelog](https
 
 ## [Unreleased]
 
+### Fixed
+
+- Host panel: when Claude refuses to start (for example, the folder is already served by another Remote Control session), the panel now shows the error right away instead of listing a session that exits a minute later.
+- Host panel: the *Open* button now appears when Claude prints the session link a few seconds after starting.
+- Docs: Claude never trusts the home directory itself; start sessions in a project folder.
+
 ## [0.3.0] - 2026-10-24
 
 ### Added

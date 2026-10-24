@@ -168,14 +168,22 @@ class Agent:
                 stderr=subprocess.STDOUT,
                 start_new_session=True,  # survives agent restarts (with KillMode=process)
             )
+        # Some failures exit at once; others print "Error: ..." and linger for a minute before exiting.
         deadline = time.monotonic() + self.start_grace
-        while time.monotonic() < deadline and proc.poll() is None:
-            time.sleep(0.2)
-        if proc.poll() is not None:
+        while True:
             with open(log_path, errors="replace") as f:
                 lines = [ln.strip() for ln in clean_log(f.read()).splitlines() if ln.strip()]
-            os.remove(log_path)
             err = next((ln.removeprefix("Error:").strip() for ln in lines if ln.startswith("Error")), "")
+            if err or proc.poll() is not None or time.monotonic() >= deadline:
+                break
+            time.sleep(0.2)
+        if err or proc.poll() is not None:
+            if proc.poll() is None:
+                with contextlib.suppress(ProcessLookupError, PermissionError):
+                    os.killpg(proc.pid, signal.SIGTERM)
+                with contextlib.suppress(subprocess.TimeoutExpired):
+                    proc.wait(timeout=5)
+            os.remove(log_path)
             raise AgentError(err or (lines[-1] if lines else f"claude exited with code {proc.returncode}"))
         entry = {"id": sid, "pid": proc.pid, "name": name, "path": rel, "started": int(time.time()), "log": log_path}
         with self.lock:

@@ -364,6 +364,17 @@ async function hostDo(kind, fn) {
   renderHost();
 }
 
+// Claude prints the session link a few seconds after start; refresh until the Open button can show.
+async function pollSessionLink(id) {
+  for (let i = 0; i < 10 && !$('#hostmodal').hidden; i++) {
+    await new Promise(r => setTimeout(r, 2000));
+    try { hostState = await hostApi('api/host'); } catch (e) { return; }
+    const s = hostState.sessions.find(x => x.id === id);
+    if (!hostBusy) renderHost();
+    if (!s || s.url) return;
+  }
+}
+
 $('#tab-host').addEventListener('click', e => { e.preventDefault(); openHost(); });
 $('#hostmodal').addEventListener('click', e => {
   if (e.target.closest('[data-hclose]') || e.target.id === 'hostmodal') { closeHost(); return; }
@@ -373,6 +384,7 @@ $('#hostmodal').addEventListener('click', e => {
     hostDo('start', async () => {
       const { session } = await hostApi('api/host/claude', { path: hostPath });
       if (session.url) window.open(session.url, '_blank', 'noopener');
+      else pollSessionLink(session.id);
       return { text: `Started “${session.name}”. It's listed under Claude sessions in the Claude app.` };
     });
     return;

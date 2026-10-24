@@ -10,6 +10,7 @@ from pihub.hostagent import Agent, AgentClient, AgentError, serve
 
 FAKE_CLAUDE = """#!/bin/sh
 case "$PWD" in
+  *busy*) echo "Error: This folder is already served by a terminal claude remote-control."; sleep 60 ;;
   *untrusted*) echo "Error: Workspace not trusted. Please run claude first."; exit 1 ;;
 esac
 printf '\\033[1A\\033[JConnected\\nhttps://claude.ai/code/session_abc123?from=cli\\n'
@@ -23,7 +24,7 @@ class AgentTests(unittest.TestCase):
         self.addCleanup(tmp.cleanup)
         self.tmp = tmp.name
         self.root = os.path.join(self.tmp, "home")
-        for d in ("projects/app", "projects/untrusted", "Music", ".hidden"):
+        for d in ("projects/app", "projects/untrusted", "projects/busy", "Music", ".hidden"):
             os.makedirs(os.path.join(self.root, d))
         open(os.path.join(self.root, "notes.txt"), "w").close()
         os.symlink(self.tmp, os.path.join(self.root, "escape"))
@@ -45,7 +46,7 @@ class AgentTests(unittest.TestCase):
         out = self.agent.list_dirs("")
         self.assertEqual(out["path"], "")
         self.assertEqual(out["dirs"], ["Music", "projects"])  # no dotdirs, files or escaping symlinks
-        self.assertEqual(self.agent.list_dirs("projects")["dirs"], ["app", "untrusted"])
+        self.assertEqual(self.agent.list_dirs("projects")["dirs"], ["app", "busy", "untrusted"])
 
     def test_refuses_paths_outside_root(self):
         for rel in ("..", "../..", "/etc", "projects/../../", "escape", "notes.txt", "missing"):
@@ -75,6 +76,15 @@ class AgentTests(unittest.TestCase):
             self.agent.start("projects/untrusted")
         self.assertEqual(self.agent.sessions(), [])
 
+    def test_start_stops_claude_that_errors_but_lingers(self):
+        self.agent.start_grace = 3
+        began = time.monotonic()
+        with self.assertRaisesRegex(AgentError, "^This folder is already served"):
+            self.agent.start("projects/busy")
+        self.assertLess(time.monotonic() - began, 3)
+        self.assertEqual(self.agent.sessions(), [])
+        self.assertEqual(os.listdir(self.agent.state_dir), [])
+
     def test_start_in_root_is_named_after_it(self):
         session = self.agent.start("", name="  ")
         self.assertEqual(session["name"], "home")
@@ -99,7 +109,7 @@ class AgentTests(unittest.TestCase):
         client = AgentClient(path)
         status = client.call("status")
         self.assertTrue(status["claude"] and status["reboot"])
-        self.assertEqual(client.call("list", path="projects")["dirs"], ["app", "untrusted"])
+        self.assertEqual(client.call("list", path="projects")["dirs"], ["app", "busy", "untrusted"])
         with self.assertRaisesRegex(AgentError, "outside"):
             client.call("list", path="..")
         with self.assertRaisesRegex(AgentError, "Unknown action"):
