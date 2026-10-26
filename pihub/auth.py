@@ -11,6 +11,7 @@ import hashlib
 import hmac
 import json
 import logging
+import math
 import os
 import secrets
 import threading
@@ -26,6 +27,8 @@ PBKDF2_ITERATIONS = 600_000
 SESSION_SECONDS = 30 * 24 * 3600
 COOKIE_NAME = "pihub_session"
 MIN_PASSWORD_LENGTH = 8
+MAX_FAILURES = 5
+LOCKOUT_SECONDS = 60
 _SCHEME = "pbkdf2_sha256"
 _OFF_VALUES = ("off", "0", "false", "no")
 
@@ -65,6 +68,16 @@ def verify_password(password: str, stored: str) -> bool:
     return hmac.compare_digest(actual, expected)
 
 
+class Throttled(AuthError):
+    """Too many failed attempts from one client; retry after ``retry_after`` seconds."""
+
+    status = 429
+
+    def __init__(self, retry_after: int) -> None:
+        super().__init__("Too many attempts — try again in a minute")
+        self.retry_after = retry_after
+
+
 class Auth:
     """The admin account and its sessions.
 
@@ -93,6 +106,7 @@ class Auth:
         self.clock = clock
         self._lock = threading.Lock()
         self._sessions: dict[str, tuple[str, float]] = {}  # token -> (username, expires)
+        self._failures: dict[str, tuple[int, float]] = {}  # client -> (failures, locked until)
 
     @property
     def enabled(self) -> bool:
@@ -123,10 +137,13 @@ class Auth:
                 doesn't say which, and the password is always hashed, so
                 neither the reply nor its timing reveals the username.
         """
+        self._check_throttle(client)
         user_ok = hmac.compare_digest(username.encode(), self.username.encode())
         password_ok = bool(self.password_hash) and verify_password(password, self.password_hash)
         if not (user_ok and password_ok):
+            self._record_failure(client)
             raise AuthError("Wrong username or password", 401)
+        self._clear_failures(client)
         return self._new_session()
 
     def session_user(self, token: str | None) -> str | None:
@@ -158,8 +175,11 @@ class Auth:
         """
         if not self.needs_setup or self.path is None:
             raise AuthError("An account already exists", 409)
+        self._check_throttle(client)
         if not (self.setup_code and hmac.compare_digest(code.encode(), self.setup_code.encode())):
+            self._record_failure(client)
             raise AuthError("Wrong setup code", 403)
+        self._clear_failures(client)
         username = username.strip()
         if not username:
             raise AuthError("Choose a username")
@@ -169,6 +189,26 @@ class Auth:
         self._save(self.path)
         self.setup_code = ""
         return self._new_session()
+
+    def _check_throttle(self, client: str) -> None:
+        with self._lock:
+            locked_until = self._failures.get(client, (0, 0.0))[1]
+        wait = locked_until - self.clock()
+        if wait > 0:
+            raise Throttled(math.ceil(wait))
+
+    def _record_failure(self, client: str) -> None:
+        """Counts a failed attempt; the MAX_FAILURES-th locks the client out for LOCKOUT_SECONDS."""
+        with self._lock:
+            count = self._failures.get(client, (0, 0.0))[0] + 1
+            if count >= MAX_FAILURES:
+                self._failures[client] = (0, self.clock() + LOCKOUT_SECONDS)
+            else:
+                self._failures[client] = (count, 0.0)
+
+    def _clear_failures(self, client: str) -> None:
+        with self._lock:
+            self._failures.pop(client, None)
 
     def _save(self, path: str) -> None:
         """Writes the account to ``path`` atomically, readable only by its owner."""

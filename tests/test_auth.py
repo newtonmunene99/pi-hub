@@ -250,5 +250,46 @@ class SetupTests(unittest.TestCase):
             auth.auth_from_env({}, self.cfg, iterations=FAST)
 
 
+class ThrottleTests(unittest.TestCase):
+    def fail_logins(self, a, client, n):
+        for _ in range(n):
+            with self.assertRaises(auth.AuthError):
+                a.login("admin", "nope", client)
+
+    def test_lockout_and_recovery(self):
+        clock = Clock()
+        a = env_auth(clock)
+        self.fail_logins(a, "10.0.0.2", auth.MAX_FAILURES)
+        with self.assertRaises(auth.Throttled) as cm:
+            a.login("admin", "s3cretpass", "10.0.0.2")  # right password, still locked
+        self.assertEqual((cm.exception.status, cm.exception.retry_after), (429, 60))
+        self.assertIsInstance(a.login("admin", "s3cretpass", "10.0.0.9"), str)  # other clients unaffected
+        clock.now += auth.LOCKOUT_SECONDS - 0.5
+        with self.assertRaises(auth.Throttled) as cm:
+            a.login("admin", "s3cretpass", "10.0.0.2")
+        self.assertEqual(cm.exception.retry_after, 1)
+        clock.now += 0.5
+        self.assertIsInstance(a.login("admin", "s3cretpass", "10.0.0.2"), str)
+
+    def test_success_resets_count(self):
+        a = env_auth()
+        self.fail_logins(a, "10.0.0.2", auth.MAX_FAILURES - 1)
+        a.login("admin", "s3cretpass", "10.0.0.2")
+        self.fail_logins(a, "10.0.0.2", auth.MAX_FAILURES - 1)
+        self.assertIsInstance(a.login("admin", "s3cretpass", "10.0.0.2"), str)
+
+    def test_setup_code_guesses_are_throttled(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        path = os.path.join(tmp.name, "auth.json")
+        a = auth.Auth("file", path=path, setup_code="abcd1234", iterations=FAST, clock=Clock())
+        for _ in range(auth.MAX_FAILURES):
+            with self.assertRaises(auth.AuthError):
+                a.setup("wrong", "admin", "s3cretpass", "10.0.0.2")
+        with self.assertRaises(auth.Throttled):
+            a.setup("abcd1234", "admin", "s3cretpass", "10.0.0.2")
+        self.assertFalse(os.path.exists(path))
+
+
 if __name__ == "__main__":
     unittest.main()
