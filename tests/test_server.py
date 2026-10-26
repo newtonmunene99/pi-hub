@@ -279,5 +279,34 @@ class SetupEndpointTests(ServerCase):
         self.assertEqual(self.call("POST", "/api/setup", body, JSON)[0], 409)
 
 
+class PasswordEndpointTests(ServerCase):
+    def test_change_password(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        a = Auth("file", path=os.path.join(tmp.name, "auth.json"), setup_code="abcd1234", iterations=1000)
+        a.setup("abcd1234", "admin", "s3cretpass", "127.0.0.1")
+        self.start(auth=a, readonly=True)
+        _, mine = self.login()
+        _, other = self.login()
+        good = {"current": "s3cretpass", "new": "n3wpassword"}
+        self.assertEqual(self.call("POST", "/api/password", good, JSON)[0], 401)
+        bad = {"current": "nope", "new": "n3wpassword"}
+        status, data, _ = self.call("POST", "/api/password", bad, {**mine, **JSON})
+        self.assertEqual((status, json.loads(data)["error"]), (403, "Current password is wrong"))
+        self.assertEqual(self.call("POST", "/api/password", good, {**mine, "Content-Type": "text/plain"})[0], 415)
+        self.assertEqual(self.call("POST", "/api/password", good, {**mine, **JSON})[0], 200)
+        self.assertEqual(self.call("GET", "/api/state", headers=mine)[0], 200)
+        self.assertEqual(self.call("GET", "/api/state", headers=other)[0], 401)
+        self.assertEqual(self.login("s3cretpass")[0], 401)
+        self.assertEqual(self.login("n3wpassword")[0], 200)
+
+    def test_env_mode_refuses(self):
+        self.start(auth=env_auth())
+        _, headers = self.login()
+        body = {"current": "s3cretpass", "new": "n3wpassword"}
+        status, data, _ = self.call("POST", "/api/password", body, {**headers, **JSON})
+        self.assertEqual((status, json.loads(data)["error"]), (409, "The password is set by PIHUB_PASSWORD"))
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -5,6 +5,7 @@
   POST /api/login    sign in ({"username", "password"}); sets the session cookie
   POST /api/logout   sign out
   POST /api/setup    create the admin account on first run ({"code", "username", "password"})
+  POST /api/password change the password ({"current", "new"}); signs out other sessions
   GET  /api/state    dashboard data
   GET  /api/config   services for the settings page (secrets masked)
   POST /api/config   save services edited in the settings page
@@ -168,7 +169,7 @@ def make_handler(
             if self.needs_sign_in(path):
                 return None
             host_action = HOST_ACTIONS.get(path)
-            account_action = path in ("/api/login", "/api/logout", "/api/setup")
+            account_action = path in ("/api/login", "/api/logout", "/api/setup", "/api/password")
             if path != "/api/config" and not account_action and not (host_action and agent):
                 return self.send(404, {"error": "Not found"})
             if readonly and not account_action:
@@ -196,7 +197,14 @@ def make_handler(
                 return self.send(400, {"error": str(e)})
 
         def account(self, path: str, body: dict[str, Any]) -> None:
-            """Handles sign-in, sign-out and first-run setup."""
+            """Handles sign-in, sign-out, first-run setup and password changes."""
+            if path == "/api/password":
+                try:
+                    current, new = str(body.get("current", "")), str(body.get("new", ""))
+                    access.change_password(self.session_token(), current, new)
+                except AuthError as e:
+                    return self.send_auth_error(e)
+                return self.send(200, {"ok": True})
             if path == "/api/logout":
                 access.logout(self.session_token())
                 cleared = f"{COOKIE_NAME}=; HttpOnly; SameSite=Strict; Path=/; Max-Age=0"
