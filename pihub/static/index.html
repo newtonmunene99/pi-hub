@@ -19,6 +19,18 @@
   <div class="meta"><span>Uptime <b id="uptime">—</b></span><span><i class="dot" id="sumdot"></i><span id="summary">—</span></span></div>
 </header>
 
+<main id="view-login" hidden>
+  <form id="loginform" class="lock">
+    <h1>Sign in</h1>
+    <label class="sr" for="li-user">Username</label>
+    <input id="li-user" name="username" autocomplete="username" placeholder="Username" required>
+    <label class="sr" for="li-pw">Password</label>
+    <input id="li-pw" name="password" type="password" autocomplete="current-password" placeholder="Password" required>
+    <button class="btn-out btn-fill" type="submit">Sign in</button>
+    <span class="msg err" id="limsg" role="alert"></span>
+  </form>
+</main>
+
 <main id="view-dash">
   <section class="stats" id="stats" aria-label="System stats"></section>
   <div class="dash">
@@ -36,14 +48,6 @@
 
 <main id="view-set" hidden>
   <section class="settings">
-    <div id="lock" class="lock" hidden>
-      <h1>Settings are locked</h1>
-      <p class="muted">Enter the password set in <code>PIHUB_PASSWORD</code>.</p>
-      <label class="sr" for="pw">Password</label>
-      <input id="pw" type="password" autocomplete="current-password" placeholder="Password">
-      <button class="btn-out btn-fill" id="unlock">Unlock</button>
-      <span class="msg err" id="lockmsg"></span>
-    </div>
     <div id="editor">
       <div class="top2">
         <div><h1>Services</h1><div class="help">Links open on <span class="chip" id="host2"></span> · stats use each service's API key. Use the <b>•••</b> button for kind, host and other options.</div></div>

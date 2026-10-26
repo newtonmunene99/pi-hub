@@ -230,6 +230,12 @@ button { cursor: pointer; }
 .notice { margin: 0 0 16px; padding: 10px 14px; border-radius: 8px; background: var(--a900); box-shadow: 0 0 0 1px var(--a800); font-size: 13px; }
 .notice.err { background: #3a2229; box-shadow: 0 0 0 1px #6b3440; }
 .lock { max-width: 360px; margin: 40px auto; display: flex; flex-direction: column; gap: 12px; }
+.lock h1 { font-size: 22px; font-weight: 500; margin: 0 0 4px; }
+.lock .btn-out { padding: 10px 14px; }
+#view-login .lock, #view-setup .lock { padding: 0 16px; }
+/* signed out: only the brand and the sign-in or setup form */
+.signed-out .tabs, .signed-out .search, .signed-out .meta, .signed-out #host,
+.signed-out #view-dash, .signed-out #view-set { display: none !important; }
 .lock input { padding: 9px 12px; background: var(--surface); border: 1px solid var(--n800); border-radius: 8px; }
 .lock input:focus { border-color: var(--accent); }
 .sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }

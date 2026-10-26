@@ -7,7 +7,6 @@ const INFO_SVG = '<svg width="16" height="16" viewBox="0 0 256 256" fill="curren
 const STAR = filled => `<svg width="16" height="16" viewBox="0 0 24 24" aria-hidden="true" fill="${filled ? 'currentColor' : 'none'}" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"><path d="M12 3.5l2.6 5.3 5.9.9-4.3 4.1 1 5.8L12 16.9l-5.2 2.7 1-5.8-4.3-4.1 5.9-.9z"/></svg>`;
 const MORE_SVG = '<svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><circle cx="5" cy="12" r="1.8"/><circle cx="12" cy="12" r="1.8"/><circle cx="19" cy="12" r="1.8"/></svg>';
 const host = location.hostname;
-const TOKEN_KEY = 'pihub-token';
 let data = null, cat = 'All', query = '', selected = null;
 
 /* ── helpers ── */
@@ -144,10 +143,11 @@ function render() {
 }
 
 async function refresh() {
+  if (signedOut()) return;
   try {
-    const r = await fetch('api/state', { cache: 'no-store' });
+    const r = await api('api/state');
     if (r.ok) { data = await r.json(); render(); }
-  } catch (e) { /* offline: keep showing the last data */ }
+  } catch (e) { /* offline or signed out: keep showing the last data */ }
 }
 
 async function copy(text) {
@@ -179,11 +179,54 @@ document.addEventListener('click', e => {
   if (ed) { selected = null; renderModal(); highlight = ed.dataset.edit; location.hash = 'settings'; }
 });
 
+/* ── sign-in ── */
+let me = null, ticking = false;
+const signedOut = () => document.body.classList.contains('signed-out');
+const postJSON = (path, body) => fetch(path, { method: 'POST', cache: 'no-store', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+
+// Every API call goes through here: a 401 means the session is gone, so show the sign-in screen.
+async function api(path, opts = {}) {
+  const r = await fetch(path, { cache: 'no-store', ...opts });
+  if (r.status === 401) { showAuth('login'); throw Object.assign(new Error('Sign in required'), { auth: true }); }
+  return r;
+}
+
+function showAuth(view) {
+  const wasOut = signedOut();
+  document.body.classList.add('signed-out');
+  if (me) me.authenticated = false;
+  selected = null; renderModal(); closeHost();
+  $('#view-login').hidden = view !== 'login';
+  if (!wasOut) (view === 'login' ? $('#li-user') : document.body).focus();
+}
+
+async function boot() {
+  try { me = await (await fetch('api/auth', { cache: 'no-store' })).json(); } catch (e) { me = { enabled: false, authenticated: true }; }
+  if (me.enabled && !me.authenticated) { showAuth('login'); return; }
+  document.body.classList.remove('signed-out');
+  $('#view-login').hidden = true;
+  route(); refresh();
+  if (!ticking) {
+    ticking = true;
+    setInterval(() => { if (!document.hidden && location.hash !== '#settings') refresh(); }, 10000);
+    document.addEventListener('visibilitychange', () => { if (!document.hidden) refresh(); });
+  }
+}
+
+$('#loginform').addEventListener('submit', async e => {
+  e.preventDefault();
+  $('#limsg').textContent = 'Signing in…';
+  try {
+    const r = await postJSON('api/login', { username: $('#li-user').value, password: $('#li-pw').value });
+    const out = await r.json().catch(() => ({}));
+    if (!r.ok) { $('#limsg').textContent = out.error || `Sign-in failed (${r.status})`; $('#li-pw').select(); return; }
+    $('#li-pw').value = ''; $('#limsg').textContent = '';
+    boot();
+  } catch (err) { $('#limsg').textContent = 'Could not reach pi-hub.'; }
+});
+
 /* ── settings ── */
 let cfg = null, highlight = null, open = new Set();
-const token = () => { try { return sessionStorage.getItem(TOKEN_KEY) || ''; } catch (e) { return ''; } };
-const setToken = v => { try { v ? sessionStorage.setItem(TOKEN_KEY, v) : sessionStorage.removeItem(TOKEN_KEY); } catch (e) { /* storage blocked */ } };
-const authHeaders = () => (token() ? { Authorization: `Bearer ${token()}` } : {});
 
 function showNotices(list, isError) {
   $('#notices').innerHTML = (list || []).map(n => `<div class="notice${isError ? ' err' : ''}">${esc(n)}</div>`).join('');
@@ -191,9 +234,8 @@ function showNotices(list, isError) {
 
 async function loadSettings() {
   $('#msg').textContent = ''; showNotices([]);
-  const r = await fetch('api/config', { cache: 'no-store', headers: authHeaders() });
-  if (r.status === 401) { setToken(''); $('#lock').hidden = false; $('#editor').hidden = true; $('#pw').focus(); return; }
-  $('#lock').hidden = true; $('#editor').hidden = false;
+  let r;
+  try { r = await api('api/config'); } catch (e) { return; }
   cfg = await r.json();
   cfg.services.forEach(s => { s._key = ''; s._password = ''; });
   open = new Set();
@@ -276,26 +318,22 @@ $('#cancel').addEventListener('click', () => { location.hash = ''; });
 $('#save').addEventListener('click', async () => {
   const msg = $('#msg');
   const services = cfg.services.map(({ _key, _password, ...s }) => ({ ...s, apiKey: _key || '', password: _password || '' }));
-  const r = await fetch('api/config', { method: 'POST', headers: { 'Content-Type': 'application/json', ...authHeaders() }, body: JSON.stringify({ services }) });
+  let r;
+  try { r = await api('api/config', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ services }) }); } catch (e) { return; }
   const body = await r.json().catch(() => ({}));
-  if (r.status === 401) { loadSettings(); return; }
   if (!r.ok) { msg.textContent = ''; showNotices([body.error || 'Could not save'], true); return; }
   cfg = body; cfg.services.forEach(s => { s._key = ''; s._password = ''; });
   renderRows(); showNotices(body.notices); msg.textContent = 'Saved.';
   refresh();
 });
-$('#unlock').addEventListener('click', () => { setToken($('#pw').value); $('#pw').value = ''; $('#lockmsg').textContent = 'Checking…'; loadSettings().then(() => { $('#lockmsg').textContent = $('#lock').hidden ? '' : 'Wrong password.'; }); });
-$('#pw').addEventListener('keydown', e => { if (e.key === 'Enter') $('#unlock').click(); });
 
 /* ── host: restart and Claude sessions (needs the host agent) ── */
 let hostState = null, hostDirs = null, hostPath = '', hostMsg = null, hostBusy = false, rebootArmed = null;
 
 async function hostApi(path, body) {
-  const opts = body === undefined ? { cache: 'no-store', headers: authHeaders() }
-    : { method: 'POST', headers: { 'Content-Type': 'application/json', ...authHeaders() }, body: JSON.stringify(body) };
-  const r = await fetch(path, opts);
+  const opts = body === undefined ? {} : { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) };
+  const r = await api(path, opts);
   const out = await r.json().catch(() => ({}));
-  if (r.status === 401) throw Object.assign(new Error('Settings are locked — unlock them in Settings first.'), { locked: true });
   if (!r.ok) throw new Error(out.error || `Request failed (${r.status})`);
   return out;
 }
@@ -314,9 +352,10 @@ async function loadHost(path) {
     [hostState, hostDirs] = await Promise.all([hostApi('api/host'), hostApi(`api/host/dirs?path=${encodeURIComponent(path)}`)]);
     hostPath = hostDirs.path;
   } catch (e) {
-    if (!hostState || e.locked) { hostState = null; hostDirs = null; }
-    hostMsg = { err: true, text: e.message, locked: !!e.locked };
-    if (path && !e.locked) return loadHost('');  // folder vanished: fall back to the root
+    if (e.auth) return;  // signed out: the sign-in screen has taken over
+    if (!hostState) { hostState = null; hostDirs = null; }
+    hostMsg = { err: true, text: e.message };
+    if (path) return loadHost('');  // folder vanished: fall back to the root
   }
   renderHost();
 }
@@ -327,7 +366,7 @@ const ago = t => { const m = Math.round((Date.now() / 1000 - t) / 60); return m 
 function renderHost() {
   const m = $('#hostmodal');
   if (m.hidden) return;
-  const st = hostState, msg = hostMsg ? `<div class="notice${hostMsg.err ? ' err' : ''}">${esc(hostMsg.text)}${hostMsg.locked ? ' <a href="#settings" data-hclose class="lnk">Open Settings</a>' : ''}</div>` : '';
+  const st = hostState, msg = hostMsg ? `<div class="notice${hostMsg.err ? ' err' : ''}">${esc(hostMsg.text)}</div>` : '';
   let body = '';
   if (st) {
     const sessions = st.sessions.length ? st.sessions.map(s => `
@@ -358,7 +397,7 @@ function renderHost() {
 
 async function hostDo(kind, fn) {
   hostBusy = kind; hostMsg = null; renderHost();
-  try { hostMsg = await fn(); } catch (e) { hostMsg = { err: true, text: e.message, locked: !!e.locked }; }
+  try { hostMsg = await fn(); } catch (e) { if (e.auth) return; hostMsg = { err: true, text: e.message }; }
   hostBusy = false;
   if (kind !== 'reboot' || hostMsg?.err) { try { hostState = await hostApi('api/host'); } catch (e) { /* keep last */ } }
   renderHost();
@@ -408,8 +447,5 @@ function route() {
   $('#tab-set').setAttribute('aria-current', set ? 'page' : 'false');
   if (set) loadSettings();
 }
-window.addEventListener('hashchange', route);
-route();
-refresh();
-setInterval(() => { if (!document.hidden && location.hash !== '#settings') refresh(); }, 10000);
-document.addEventListener('visibilitychange', () => { if (!document.hidden) refresh(); });
+window.addEventListener('hashchange', () => { if (!signedOut()) route(); });
+boot();
