@@ -1,0 +1,2 @@
+Found in the browser hand check (Playwright screenshot of Settings > Account after a password change). app.css: .pwform .foot wraps, the button never wraps.
+Files: pihub/static/app.css.
