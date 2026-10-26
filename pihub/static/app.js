@@ -146,7 +146,9 @@ async function refresh() {
   if (signedOut()) return;
   try {
     const r = await api('api/state');
-    if (r.ok) { data = await r.json(); render(); }
+    if (!r.ok) return;
+    const fresh = await r.json();
+    if (!signedOut()) { data = fresh; render(); }  // a reply that lands after sign-out is dropped
   } catch (e) { /* offline or signed out: keep showing the last data */ }
 }
 
@@ -201,6 +203,11 @@ function showAuth(view) {
   // Nothing from the last session stays on the page.
   data = null; cfg = null;
   for (const id of ['#stats', '#pinned', '#cats', '#grid', '#side', '#rows', '#notices']) $(id).innerHTML = '';
+  $('#editor').hidden = true;
+  $('#title').textContent = document.title = 'pi-hub';
+  $('#summary').textContent = $('#uptime').textContent = '—';
+  $('#sumdot').className = 'dot';
+  $('#empty').hidden = true;
   $('#view-login').hidden = view !== 'login';
   $('#view-setup').hidden = view !== 'setup';
   if (!wasOut) $(view === 'login' ? '#li-user' : '#su-code').focus();
@@ -250,7 +257,12 @@ $('#setupform').addEventListener('submit', async e => {
   try {
     const r = await postJSON('api/setup', { code: $('#su-code').value.trim(), username: $('#su-user').value, password: pw });
     const out = await r.json().catch(() => ({}));
-    if (r.status === 409) { boot(); return; }  // the account was created meanwhile (another tab): go to sign-in
+    if (r.status === 409) {  // the account was created meanwhile (another tab): go to sign-in
+      $('#setupform').reset(); msg.textContent = '';
+      await boot();
+      $('#limsg').textContent = 'An account already exists — sign in.';
+      return;
+    }
     if (!r.ok) { msg.textContent = out.error || `Setup failed (${r.status})`; return; }
     $('#setupform').reset(); msg.textContent = '';
     boot();
@@ -284,9 +296,15 @@ async function loadSettings() {
   $('#msg').textContent = ''; showNotices([]);
   let r;
   try { r = await api('api/config'); } catch (e) { return; }
-  cfg = await r.json();
-  $('#editor').hidden = !!cfg.readonly;  // read-only: only the Account section is shown
-  if (cfg.readonly) return;
+  const loaded = await r.json();
+  if (signedOut()) return;
+  cfg = loaded;
+  if (cfg.readonly) {
+    // Read-only: only the Account section is shown, if there is one.
+    if (!me?.canChangePassword) location.hash = '';
+    return;
+  }
+  $('#editor').hidden = false;
   cfg.services.forEach(s => { s._key = ''; s._password = ''; });
   open = new Set();
   renderRows();
