@@ -121,6 +121,14 @@ class ModeTests(unittest.TestCase):
         a = self.mode(env)
         self.assertIsInstance(a.login("admin", "s3cretpass", "10.0.0.2"), str)
 
+    def test_env_reference_value_is_stripped(self):
+        env = {
+            "PIHUB_USERNAME": "admin",
+            "PIHUB_PASSWORD": "env:PIHUB_TEST_ONLY_PW",
+            "PIHUB_TEST_ONLY_PW": "s3cretpass\n",
+        }
+        self.assertIsInstance(self.mode(env).login("admin", "s3cretpass", "10.0.0.2"), str)
+
     def test_dangling_symlink_is_an_error_not_setup(self):
         os.symlink(os.path.join(self.dir, "gone.json"), os.path.join(self.dir, "auth.json"))
         with self.assertRaisesRegex(auth.AuthError, "corrupt"):
@@ -253,6 +261,29 @@ class SetupTests(unittest.TestCase):
             self.assertEqual(cm.exception.status, 400)
         self.assertTrue(a.needs_setup)
 
+    def test_stale_temp_file_does_not_loosen_permissions(self):
+        a, code = self.fresh()
+        with open(self.path + ".tmp", "w") as f:
+            f.write("junk")
+        os.chmod(self.path + ".tmp", 0o644)
+        a.setup(code, "admin", "s3cretpass", "10.0.0.2")
+        self.assertEqual(os.stat(self.path).st_mode & 0o777, 0o600)
+        self.assertFalse(os.path.exists(self.path + ".tmp"))
+
+    def test_setup_code_is_replaced_after_50_wrong_guesses(self):
+        a, code = self.fresh()
+        for i in range(49):
+            with self.assertRaises(auth.AuthError):
+                a.setup("wrong", "admin", "s3cretpass", f"10.0.{i}.1")
+        with self.assertLogs("pihub.auth", "WARNING") as logs, self.assertRaises(auth.AuthError):
+            a.setup("wrong", "admin", "s3cretpass", "10.0.99.1")
+        new_code = re.search(r"setup code (\w+)", logs.output[0]).group(1)
+        self.assertNotEqual(new_code, code)
+        with self.assertRaises(auth.AuthError) as cm:
+            a.setup(code, "admin", "s3cretpass", "10.0.100.1")
+        self.assertEqual(cm.exception.status, 403)
+        self.assertIsInstance(a.setup(new_code, "admin", "s3cretpass", "10.0.101.1"), str)
+
     def test_second_setup_refused(self):
         a, code = self.fresh()
         a.setup(code, "admin", "s3cretpass", "10.0.0.2")
@@ -355,6 +386,22 @@ class ChangePasswordTests(unittest.TestCase):
         with self.assertRaises(auth.Throttled):
             self.a.change_password(self.mine, "s3cretpass", "n3wpassword")
 
+    def test_login_racing_a_password_change_gets_no_session(self):
+        real = auth.verify_password
+        changed = []
+
+        def change_mid_login(password, stored):
+            ok = real(password, stored)
+            if not changed:  # first call is the racing login; change the password before it finishes
+                changed.append(True)
+                self.a.change_password(self.mine, "s3cretpass", "n3wpassword")
+            return ok
+
+        with mock.patch.object(auth, "verify_password", change_mid_login), self.assertRaises(auth.AuthError) as cm:
+            self.a.login("admin", "s3cretpass", "10.0.0.7")
+        self.assertEqual(cm.exception.status, 401)
+        self.assertEqual(self.a.session_user(self.mine), "admin")
+
     def test_env_mode(self):
         a = env_auth()
         token = a.login("admin", "s3cretpass", "10.0.0.2")
@@ -422,6 +469,7 @@ class ConcurrencyTests(unittest.TestCase):
         os.mkdir(sub)
         self.assertIsInstance(a.setup("abcd1234", "admin", "s3cretpass", "10.0.0.2"), str)
 
+    @unittest.skipIf(os.geteuid() == 0, "root can write to read-only directories")
     def test_failed_save_keeps_old_password(self):
         sub = os.path.join(self.dir, "sub")
         os.mkdir(sub)

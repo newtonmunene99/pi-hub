@@ -7,6 +7,7 @@ breaking existing hashes.
 
 import base64
 import binascii
+import contextlib
 import hashlib
 import hmac
 import json
@@ -30,6 +31,7 @@ MIN_PASSWORD_LENGTH = 8
 MAX_FAILURES = 5
 LOCKOUT_SECONDS = 60
 MAX_TRACKED_CLIENTS = 1024
+MAX_SETUP_GUESSES = 50  # wrong setup codes in total before a new code replaces the old one
 _SCHEME = "pbkdf2_sha256"
 _OFF_VALUES = ("off", "0", "false", "no")
 
@@ -112,6 +114,8 @@ class Auth:
         self.clock = clock
         self._lock = threading.Lock()  # guards _sessions and _failures
         self._account_lock = threading.Lock()  # serialises setup and password changes
+        self._generation = 0  # bumped when the password changes; sessions from older checks are refused
+        self._setup_guesses = 0
         self._sessions: dict[str, tuple[str, float]] = {}  # token -> (username, expires)
         self._failures: dict[str, tuple[int, float]] = {}  # client -> (failures, locked until)
 
@@ -145,12 +149,14 @@ class Auth:
                 neither the reply nor its timing reveals the username.
         """
         self._count_attempt(client)
-        user_ok = hmac.compare_digest(_utf8(username), _utf8(self.username))
-        password_ok = bool(self.password_hash) and verify_password(password, self.password_hash)
+        with self._lock:
+            stored_user, stored_hash, generation = self.username, self.password_hash, self._generation
+        user_ok = hmac.compare_digest(_utf8(username), _utf8(stored_user))
+        password_ok = bool(stored_hash) and verify_password(password, stored_hash)
         if not (user_ok and password_ok):
             raise AuthError("Wrong username or password", 401)
         self._clear_failures(client)
-        return self._new_session()
+        return self._new_session(generation)
 
     def session_user(self, token: str | None) -> str | None:
         """The username a live session token belongs to, or None."""
@@ -186,6 +192,11 @@ class Auth:
                 raise AuthError("An account already exists", 409)
             self._count_attempt(client)
             if not (self.setup_code and hmac.compare_digest(_utf8(code), _utf8(self.setup_code))):
+                self._setup_guesses += 1
+                if self._setup_guesses >= MAX_SETUP_GUESSES:
+                    # Spreading guesses over many addresses dodges the per-address limit; a new code resets them.
+                    self._setup_guesses = 0
+                    self.setup_code = _new_setup_code()
                 raise AuthError("Wrong setup code", 403)
             self._clear_failures(client)
             username = username.strip()
@@ -194,10 +205,12 @@ class Auth:
             _check_password(password)
             password_hash = hash_password(password, iterations=self.iterations)
             _save(self.path, username, password_hash)
-            self.password_hash = password_hash
-            self.username = username
+            with self._lock:
+                self.password_hash = password_hash
+                self.username = username
+                generation = self._generation
             self.setup_code = ""
-        return self._new_session()
+        return self._new_session(generation)
 
     def change_password(self, token: str | None, current: str, new: str) -> None:
         """Replaces the password and signs out every other session.
@@ -220,9 +233,10 @@ class Auth:
             _check_password(new)
             password_hash = hash_password(new, iterations=self.iterations)
             _save(self.path, self.username, password_hash)
-            self.password_hash = password_hash
-        with self._lock:
-            self._sessions = {t: s for t, s in self._sessions.items() if t == token}
+            with self._lock:
+                self.password_hash = password_hash
+                self._generation += 1
+                self._sessions = {t: s for t, s in self._sessions.items() if t == token}
 
     def _count_attempt(self, client: str) -> None:
         """Counts an attempt before it is checked, so parallel requests can't slip past the limit.
@@ -257,10 +271,13 @@ class Auth:
         with self._lock:
             self._failures.pop(client, None)
 
-    def _new_session(self) -> str:
+    def _new_session(self, generation: int) -> str:
+        """Issues a session, unless the password changed since it was checked at ``generation``."""
         token = secrets.token_urlsafe(32)
         now = self.clock()
         with self._lock:
+            if generation != self._generation:
+                raise AuthError("Wrong username or password", 401)
             self._sessions = {t: s for t, s in self._sessions.items() if s[1] > now}
             self._sessions[token] = (self.username, now + SESSION_SECONDS)
         return token
@@ -274,13 +291,25 @@ def _save(path: str, username: str, password_hash: str) -> None:
     """
     tmp = path + ".tmp"
     try:
-        fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        # A leftover temp file would keep its old permissions, so always start from a new one.
+        with contextlib.suppress(FileNotFoundError):
+            os.unlink(tmp)
+        fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
         with os.fdopen(fd, "w") as f:
             json.dump({"username": username, "password": password_hash}, f, indent=2)
             f.write("\n")
+            f.flush()
+            os.fsync(f.fileno())  # survive a power cut: never rename an empty file over the account
         os.replace(tmp, path)
     except OSError as e:
         raise AuthError(f"Could not save the account to {path}: {e.strerror}", 500) from e
+
+
+def _new_setup_code() -> str:
+    """Returns a fresh one-time setup code and logs it for the admin to read."""
+    code = secrets.token_hex(4)
+    logger.warning("No admin account yet. Open pi-hub and enter setup code %s to create one.", code)
+    return code
 
 
 def _check_password(password: str) -> None:
@@ -328,9 +357,10 @@ def auth_from_env(
     raw_password = environ.get("PIHUB_PASSWORD", "")
     if username and raw_password:
         # env: references are looked up in the same environment as everything else.
-        password = (
-            environ.get(raw_password[4:], "") if raw_password.startswith("env:") else resolve_secret(raw_password)
-        )
+        if raw_password.startswith("env:"):
+            password = environ.get(raw_password[4:], "").strip()
+        else:
+            password = resolve_secret(raw_password)
         if not password:
             raise AuthError("PIHUB_PASSWORD points at an empty or missing variable or file")
         return Auth(
@@ -347,6 +377,4 @@ def auth_from_env(
         return Auth("file", username=username, password_hash=password_hash, path=path, iterations=iterations)
     except FileNotFoundError:
         pass
-    code = secrets.token_hex(4)
-    logger.warning("No admin account yet. Open pi-hub and enter setup code %s to create one.", code)
-    return Auth("file", path=path, setup_code=code, iterations=iterations)
+    return Auth("file", path=path, setup_code=_new_setup_code(), iterations=iterations)
