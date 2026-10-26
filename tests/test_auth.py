@@ -110,6 +110,25 @@ class ModeTests(unittest.TestCase):
         self.write_account(path)
         self.assertFalse(self.mode({"PIHUB_AUTH_FILE": path}).needs_setup)
 
+    def test_password_env_reference_uses_given_environment(self):
+        env = {
+            "PIHUB_USERNAME": "admin",
+            "PIHUB_PASSWORD": "env:PIHUB_TEST_ONLY_PW",
+            "PIHUB_TEST_ONLY_PW": "s3cretpass",
+        }
+        a = self.mode(env)
+        self.assertIsInstance(a.login("admin", "s3cretpass", "10.0.0.2"), str)
+
+    def test_dangling_symlink_is_an_error_not_setup(self):
+        os.symlink(os.path.join(self.dir, "gone.json"), os.path.join(self.dir, "auth.json"))
+        with self.assertRaisesRegex(auth.AuthError, "corrupt"):
+            self.mode({})
+
+    def test_unreadable_path_is_an_error_not_setup(self):
+        os.mkdir(os.path.join(self.dir, "auth.json"))  # a directory can't be read as the account
+        with self.assertRaisesRegex(auth.AuthError, "corrupt"):
+            self.mode({})
+
     def test_corrupt_file_is_an_error_not_setup(self):
         for body in ("{not json", "[]", '{"username": "admin"}', '{"username": "", "password": "x"}'):
             with open(os.path.join(self.dir, "auth.json"), "w") as f:

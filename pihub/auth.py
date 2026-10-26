@@ -255,11 +255,20 @@ def _check_password(password: str) -> None:
 
 
 def _load_account(path: str) -> tuple[str, str]:
-    """Reads ``(username, password_hash)`` from an auth file, or raises AuthError if it is unusable."""
+    """Reads ``(username, password_hash)`` from an auth file.
+
+    Raises:
+        FileNotFoundError: There is no file (and no dangling symlink) at ``path``: first run.
+        AuthError: Anything else that stops the account being read.
+    """
     try:
         with open(path) as f:
             data = json.load(f)
         username, password_hash = data["username"], data["password"]
+    except FileNotFoundError:
+        if not os.path.islink(path):
+            raise
+        username = password_hash = None
     except (OSError, ValueError, KeyError, TypeError):
         username = password_hash = None
     if not (isinstance(username, str) and username and isinstance(password_hash, str) and password_hash):
@@ -284,7 +293,10 @@ def auth_from_env(
     username = environ.get("PIHUB_USERNAME", "").strip()
     raw_password = environ.get("PIHUB_PASSWORD", "")
     if username and raw_password:
-        password = resolve_secret(raw_password)
+        # env: references are looked up in the same environment as everything else.
+        password = (
+            environ.get(raw_password[4:], "") if raw_password.startswith("env:") else resolve_secret(raw_password)
+        )
         if not password:
             raise AuthError("PIHUB_PASSWORD points at an empty or missing variable or file")
         return Auth(
@@ -296,9 +308,11 @@ def auth_from_env(
     if username or raw_password:
         raise AuthError("Set both PIHUB_USERNAME and PIHUB_PASSWORD, or neither to create the account in the browser")
     path = environ.get("PIHUB_AUTH_FILE") or os.path.join(os.path.dirname(config_path or "."), "auth.json")
-    if os.path.exists(path):
+    try:
         username, password_hash = _load_account(path)
         return Auth("file", username=username, password_hash=password_hash, path=path, iterations=iterations)
+    except FileNotFoundError:
+        pass
     code = secrets.token_hex(4)
     logger.warning("No admin account yet. Open pi-hub and enter setup code %s to create one.", code)
     return Auth("file", path=path, setup_code=code, iterations=iterations)
