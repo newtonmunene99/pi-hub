@@ -1,0 +1,4 @@
+Adds AuthError (with an HTTP status), the Auth class (mode, enabled, needs_setup) and auth_from_env.
+Modes: off (demo or PIHUB_AUTH=off, with a warning), env (both variables; password accepts env:/file: references), file (auth.json, or PIHUB_AUTH_FILE).
+A corrupt auth file is an error, never a fallback to first-run setup, so nobody can reclaim the account by breaking the file.
+Files: pihub/auth.py, tests/test_auth.py.
