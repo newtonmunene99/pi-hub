@@ -1,0 +1,2 @@
+server.py: /api/setup is public and JSON-only, not blocked by PIHUB_READONLY; calls Auth.setup with the client address and answers like /api/login (status + session cookie). Errors map to AuthError status (403 wrong code, 409 account exists or env mode, 400 validation, 429 throttled with Retry-After).
+Files: pihub/server.py, tests/test_server.py.
