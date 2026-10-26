@@ -1,5 +1,6 @@
 import json
 import os
+import re
 import tempfile
 import unittest
 
@@ -180,6 +181,73 @@ class SessionTests(unittest.TestCase):
         token = stored.login("admin", "s3cretpass", "10.0.0.2")
         self.assertEqual(stored.status(token)["canChangePassword"], True)
         self.assertEqual(stored.status(None)["canChangePassword"], False)
+
+
+class SetupTests(unittest.TestCase):
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.cfg = os.path.join(tmp.name, "config.json")
+        self.path = os.path.join(tmp.name, "auth.json")
+
+    def fresh(self):
+        with self.assertLogs("pihub.auth", "WARNING") as logs:
+            a = auth.auth_from_env({}, self.cfg, iterations=FAST)
+        code = re.search(r"setup code (\w+)", logs.output[0]).group(1)
+        return a, code
+
+    def test_setup_code_is_logged_and_random(self):
+        _, first = self.fresh()
+        _, second = self.fresh()
+        self.assertEqual(len(first), 8)
+        self.assertNotEqual(first, second)
+
+    def test_setup_creates_private_file_and_signs_in(self):
+        a, code = self.fresh()
+        token = a.setup(code, " admin ", "s3cretpass", "10.0.0.2")
+        self.assertEqual(a.session_user(token), "admin")
+        self.assertFalse(a.needs_setup)
+        self.assertEqual(os.stat(self.path).st_mode & 0o777, 0o600)
+        with open(self.path) as f:
+            saved = json.load(f)
+        self.assertEqual(saved["username"], "admin")
+        self.assertNotIn("s3cretpass", json.dumps(saved))
+        reloaded = auth.auth_from_env({}, self.cfg, iterations=FAST)
+        self.assertIsInstance(reloaded.login("admin", "s3cretpass", "10.0.0.2"), str)
+
+    def test_wrong_code(self):
+        a, _ = self.fresh()
+        for code in ("00000000", ""):
+            with self.subTest(code=code), self.assertRaises(auth.AuthError) as cm:
+                a.setup(code, "admin", "s3cretpass", "10.0.0.2")
+            self.assertEqual((str(cm.exception), cm.exception.status), ("Wrong setup code", 403))
+        self.assertFalse(os.path.exists(self.path))
+
+    def test_validation(self):
+        a, code = self.fresh()
+        for user, pw in (("", "s3cretpass"), ("  ", "s3cretpass"), ("admin", "short")):
+            with self.subTest(user=user, pw=pw), self.assertRaises(auth.AuthError) as cm:
+                a.setup(code, user, pw, "10.0.0.2")
+            self.assertEqual(cm.exception.status, 400)
+        self.assertTrue(a.needs_setup)
+
+    def test_second_setup_refused(self):
+        a, code = self.fresh()
+        a.setup(code, "admin", "s3cretpass", "10.0.0.2")
+        with self.assertRaises(auth.AuthError) as cm:
+            a.setup(code, "evil", "s3cretpass", "10.0.0.3")
+        self.assertEqual(cm.exception.status, 409)
+
+    def test_env_mode_has_no_setup(self):
+        with self.assertRaises(auth.AuthError) as cm:
+            env_auth().setup("x", "admin", "s3cretpass", "10.0.0.2")
+        self.assertEqual(cm.exception.status, 409)
+
+    def test_existing_account_logs_no_code(self):
+        a, code = self.fresh()
+        a.setup(code, "admin", "s3cretpass", "10.0.0.2")
+        with self.assertNoLogs("pihub.auth", "WARNING"):
+            auth.auth_from_env({}, self.cfg, iterations=FAST)
 
 
 if __name__ == "__main__":

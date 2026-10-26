@@ -25,6 +25,7 @@ logger = logging.getLogger(__name__)
 PBKDF2_ITERATIONS = 600_000
 SESSION_SECONDS = 30 * 24 * 3600
 COOKIE_NAME = "pihub_session"
+MIN_PASSWORD_LENGTH = 8
 _SCHEME = "pbkdf2_sha256"
 _OFF_VALUES = ("off", "0", "false", "no")
 
@@ -148,11 +149,46 @@ class Auth:
             with self._lock:
                 self._sessions.pop(token, None)
 
+    def setup(self, code: str, username: str, password: str, client: str) -> str:
+        """Creates the admin account on first run and returns a session token for it.
+
+        Raises:
+            AuthError: 409 once an account exists (or outside file mode), 403
+                for a wrong setup code, 400 for an unusable username or password.
+        """
+        if not self.needs_setup or self.path is None:
+            raise AuthError("An account already exists", 409)
+        if not (self.setup_code and hmac.compare_digest(code.encode(), self.setup_code.encode())):
+            raise AuthError("Wrong setup code", 403)
+        username = username.strip()
+        if not username:
+            raise AuthError("Choose a username")
+        _check_password(password)
+        self.username = username
+        self.password_hash = hash_password(password, iterations=self.iterations)
+        self._save(self.path)
+        self.setup_code = ""
+        return self._new_session()
+
+    def _save(self, path: str) -> None:
+        """Writes the account to ``path`` atomically, readable only by its owner."""
+        tmp = path + ".tmp"
+        fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        with os.fdopen(fd, "w") as f:
+            json.dump({"username": self.username, "password": self.password_hash}, f, indent=2)
+            f.write("\n")
+        os.replace(tmp, path)
+
     def _new_session(self) -> str:
         token = secrets.token_urlsafe(32)
         with self._lock:
             self._sessions[token] = (self.username, self.clock() + SESSION_SECONDS)
         return token
+
+
+def _check_password(password: str) -> None:
+    if len(password) < MIN_PASSWORD_LENGTH:
+        raise AuthError(f"Use a password of at least {MIN_PASSWORD_LENGTH} characters")
 
 
 def _load_account(path: str) -> tuple[str, str]:
@@ -200,4 +236,6 @@ def auth_from_env(
     if os.path.exists(path):
         username, password_hash = _load_account(path)
         return Auth("file", username=username, password_hash=password_hash, path=path, iterations=iterations)
-    return Auth("file", path=path, iterations=iterations)
+    code = secrets.token_hex(4)
+    logger.warning("No admin account yet. Open pi-hub and enter setup code %s to create one.", code)
+    return Auth("file", path=path, setup_code=code, iterations=iterations)
