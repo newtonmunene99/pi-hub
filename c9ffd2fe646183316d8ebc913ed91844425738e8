@@ -1,0 +1,2 @@
+From phase 2 review round 2 (Approve with nits): session_token collects every non-empty pihub_session value and returns the live one (else the first). Tests: stray bad/empty cookie before the valid one, exact-name matching (xpihub_session, pihub_sessionx, value with trailing =x), bypass paths assert exact 401 (http.server collapses a leading //), malformed-body cases split into subtests.
+Files: pihub/server.py, tests/test_server.py.
