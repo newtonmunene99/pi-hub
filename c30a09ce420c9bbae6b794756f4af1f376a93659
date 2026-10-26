@@ -1,5 +1,5 @@
 index.html: #view-login with a real <form> (autocomplete username/current-password, so password managers work); #lock removed.
 app.js: api() wraps fetch and switches to the sign-in view on 401; boot() reads /api/auth before routing; refresh, settings load/save and the host panel use api(); TOKEN_KEY/authHeaders/unlock code and the host panel "locked" path removed; polling skips while signed out.
 app.css: .signed-out hides tabs, search, meta and the main views.
-Checked: served page has the login form and no #lock; node --check passes. Visual check is the phase hand check.
+Checked: served page has the login form and no #lock; node --check passes. The look is checked by hand in a browser.
 Files: pihub/static/index.html, pihub/static/app.js, pihub/static/app.css.
