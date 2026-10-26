@@ -1,0 +1,4 @@
+Adds Throttled (status 429, retry_after) and MAX_FAILURES=5 / LOCKOUT_SECONDS=60.
+login() and setup() check the lockout first, count wrong credentials or codes per client address, and clear the count on success.
+Why: the setup code is only 8 hex characters and the admin password guards host actions; this makes guessing impractical on a LAN.
+Files: pihub/auth.py, tests/test_auth.py.
