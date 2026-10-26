@@ -1,0 +1,2 @@
+server.py: /api/password is gated (needs a session), JSON-only, not blocked by readonly; calls Auth.change_password with the request session token. 403 wrong current password, 400 short, 409 env mode, 429 throttled.
+Files: pihub/server.py, tests/test_server.py.
