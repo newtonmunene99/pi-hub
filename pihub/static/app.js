@@ -197,14 +197,15 @@ function showAuth(view) {
   if (me) me.authenticated = false;
   selected = null; renderModal(); closeHost();
   $('#view-login').hidden = view !== 'login';
-  if (!wasOut) (view === 'login' ? $('#li-user') : document.body).focus();
+  $('#view-setup').hidden = view !== 'setup';
+  if (!wasOut) $(view === 'login' ? '#li-user' : '#su-code').focus();
 }
 
 async function boot() {
   try { me = await (await fetch('api/auth', { cache: 'no-store' })).json(); } catch (e) { me = { enabled: false, authenticated: true }; }
-  if (me.enabled && !me.authenticated) { showAuth('login'); return; }
+  if (me.enabled && !me.authenticated) { showAuth(me.setup ? 'setup' : 'login'); return; }
   document.body.classList.remove('signed-out');
-  $('#view-login').hidden = true;
+  $('#view-login').hidden = $('#view-setup').hidden = true;
   route(); refresh();
   if (!ticking) {
     ticking = true;
@@ -223,6 +224,21 @@ $('#loginform').addEventListener('submit', async e => {
     $('#li-pw').value = ''; $('#limsg').textContent = '';
     boot();
   } catch (err) { $('#limsg').textContent = 'Could not reach pi-hub.'; }
+});
+
+$('#setupform').addEventListener('submit', async e => {
+  e.preventDefault();
+  const msg = $('#sumsg'), pw = $('#su-pw').value;
+  if (pw.length < 8) { msg.textContent = 'Use a password of at least 8 characters.'; return; }
+  if (pw !== $('#su-pw2').value) { msg.textContent = "Passwords don't match."; return; }
+  msg.textContent = 'Creating account…';
+  try {
+    const r = await postJSON('api/setup', { code: $('#su-code').value.trim(), username: $('#su-user').value, password: pw });
+    const out = await r.json().catch(() => ({}));
+    if (!r.ok) { msg.textContent = out.error || `Setup failed (${r.status})`; return; }
+    $('#setupform').reset(); msg.textContent = '';
+    boot();
+  } catch (err) { msg.textContent = 'Could not reach pi-hub.'; }
 });
 
 /* ── settings ── */

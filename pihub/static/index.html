@@ -31,6 +31,23 @@
   </form>
 </main>
 
+<main id="view-setup" hidden>
+  <form id="setupform" class="lock">
+    <h1>Create your admin account</h1>
+    <p class="muted">Enter the setup code from pi-hub's log (<code>docker logs pi-hub</code>), then choose a username and password.</p>
+    <label class="sr" for="su-code">Setup code</label>
+    <input id="su-code" name="code" autocomplete="one-time-code" placeholder="Setup code" required>
+    <label class="sr" for="su-user">Username</label>
+    <input id="su-user" name="username" autocomplete="username" placeholder="Username" required>
+    <label class="sr" for="su-pw">Password</label>
+    <input id="su-pw" name="password" type="password" autocomplete="new-password" minlength="8" placeholder="Password (8+ characters)" required>
+    <label class="sr" for="su-pw2">Repeat password</label>
+    <input id="su-pw2" type="password" autocomplete="new-password" minlength="8" placeholder="Repeat password" required>
+    <button class="btn-out btn-fill" type="submit">Create account</button>
+    <span class="msg err" id="sumsg" role="alert"></span>
+  </form>
+</main>
+
 <main id="view-dash">
   <section class="stats" id="stats" aria-label="System stats"></section>
   <div class="dash">
