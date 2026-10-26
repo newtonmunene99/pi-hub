@@ -1,2 +1,8 @@
 From phase 2 review round 2 (Approve with nits): session_token collects every non-empty pihub_session value and returns the live one (else the first). Tests: stray bad/empty cookie before the valid one, exact-name matching (xpihub_session, pihub_sessionx, value with trailing =x), bypass paths assert exact 401 (http.server collapses a leading //), malformed-body cases split into subtests.
 Files: pihub/server.py, tests/test_server.py.
+
+Phase verification: Server
+Tests: full unittest suite OK (incl. 32 server tests), ruff, mypy clean.
+Agent-run checks against real processes: env mode 401 -> login -> 200; PIHUB_PASSWORD alone exits 2; PIHUB_AUTH=off logs warning; file mode setup code from log -> /api/setup -> auth.json mode 600 -> password change -> restart keeps account, no new code; no password in logs. Docker demo smoke test (CI steps) passes.
+Independent verifier: round 1 Reject (cookie parsing dropped the session next to junk cookies) -> fixed 3f3879f; round 2 Approve with nits -> fixed c9ffd2f.
+Hand check: none needed, UI not wired yet.
