@@ -2,6 +2,7 @@ import json
 import os
 import re
 import tempfile
+import threading
 import unittest
 
 from pihub import auth
@@ -358,6 +359,78 @@ class ChangePasswordTests(unittest.TestCase):
         with self.assertRaises(auth.AuthError) as cm:
             a.change_password(token, "s3cretpass", "n3wpassword")
         self.assertEqual(cm.exception.status, 409)
+
+
+def run_together(n, fn):
+    """Runs fn() in n threads released at the same moment; returns each result or exception."""
+    barrier = threading.Barrier(n)
+    results = []
+
+    def worker():
+        barrier.wait()
+        try:
+            results.append(fn())
+        except Exception as e:  # noqa: BLE001 - collected for the assertions
+            results.append(e)
+
+    threads = [threading.Thread(target=worker) for _ in range(n)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    return results
+
+
+class ConcurrencyTests(unittest.TestCase):
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.dir = tmp.name
+
+    def test_parallel_wrong_logins_cannot_exceed_the_limit(self):
+        a = env_auth()
+        results = run_together(10, lambda: a.login("admin", "nope", "10.0.0.2"))
+        throttled = [r for r in results if isinstance(r, auth.Throttled)]
+        wrong = [r for r in results if isinstance(r, auth.AuthError) and not isinstance(r, auth.Throttled)]
+        self.assertEqual((len(wrong), len(throttled)), (5, 5))
+
+    def test_parallel_setups_create_one_account(self):
+        a = auth.Auth("file", path=os.path.join(self.dir, "auth.json"), setup_code="abcd1234", iterations=FAST)
+        users = iter(["alice", "bob"])
+        lock = threading.Lock()
+
+        def attempt():
+            with lock:
+                user = next(users)
+            return a.setup("abcd1234", user, "s3cretpass", user)
+
+        results = run_together(2, attempt)
+        statuses = sorted("ok" if isinstance(r, str) else str(r.status) for r in results)
+        self.assertEqual(statuses, ["409", "ok"])
+        with open(os.path.join(self.dir, "auth.json")) as f:
+            self.assertEqual(json.load(f)["username"], a.username)
+
+    def test_failed_save_leaves_setup_open(self):
+        sub = os.path.join(self.dir, "sub")
+        a = auth.Auth("file", path=os.path.join(sub, "auth.json"), setup_code="abcd1234", iterations=FAST)
+        with self.assertRaises(auth.AuthError) as cm:
+            a.setup("abcd1234", "admin", "s3cretpass", "10.0.0.2")
+        self.assertEqual(cm.exception.status, 500)
+        self.assertTrue(a.needs_setup)
+        os.mkdir(sub)
+        self.assertIsInstance(a.setup("abcd1234", "admin", "s3cretpass", "10.0.0.2"), str)
+
+    def test_failed_save_keeps_old_password(self):
+        sub = os.path.join(self.dir, "sub")
+        os.mkdir(sub)
+        a = auth.Auth("file", path=os.path.join(sub, "auth.json"), setup_code="abcd1234", iterations=FAST)
+        token = a.setup("abcd1234", "admin", "s3cretpass", "10.0.0.2")
+        os.chmod(sub, 0o500)
+        self.addCleanup(os.chmod, sub, 0o700)
+        with self.assertRaises(auth.AuthError) as cm:
+            a.change_password(token, "s3cretpass", "n3wpassword")
+        self.assertEqual(cm.exception.status, 500)
+        self.assertIsInstance(a.login("admin", "s3cretpass", "10.0.0.2"), str)
 
 
 if __name__ == "__main__":

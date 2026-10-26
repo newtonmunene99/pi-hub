@@ -104,7 +104,8 @@ class Auth:
         self.setup_code = setup_code
         self.iterations = iterations
         self.clock = clock
-        self._lock = threading.Lock()
+        self._lock = threading.Lock()  # guards _sessions and _failures
+        self._account_lock = threading.Lock()  # serialises setup and password changes
         self._sessions: dict[str, tuple[str, float]] = {}  # token -> (username, expires)
         self._failures: dict[str, tuple[int, float]] = {}  # client -> (failures, locked until)
 
@@ -137,11 +138,10 @@ class Auth:
                 doesn't say which, and the password is always hashed, so
                 neither the reply nor its timing reveals the username.
         """
-        self._check_throttle(client)
+        self._count_attempt(client)
         user_ok = hmac.compare_digest(username.encode(), self.username.encode())
         password_ok = bool(self.password_hash) and verify_password(password, self.password_hash)
         if not (user_ok and password_ok):
-            self._record_failure(client)
             raise AuthError("Wrong username or password", 401)
         self._clear_failures(client)
         return self._new_session()
@@ -171,23 +171,26 @@ class Auth:
 
         Raises:
             AuthError: 409 once an account exists (or outside file mode), 403
-                for a wrong setup code, 400 for an unusable username or password.
+                for a wrong setup code, 400 for an unusable username or
+                password, 500 if the account can't be written (the code stays
+                valid so setup can be retried).
         """
-        if not self.needs_setup or self.path is None:
-            raise AuthError("An account already exists", 409)
-        self._check_throttle(client)
-        if not (self.setup_code and hmac.compare_digest(code.encode(), self.setup_code.encode())):
-            self._record_failure(client)
-            raise AuthError("Wrong setup code", 403)
-        self._clear_failures(client)
-        username = username.strip()
-        if not username:
-            raise AuthError("Choose a username")
-        _check_password(password)
-        self.username = username
-        self.password_hash = hash_password(password, iterations=self.iterations)
-        self._save(self.path)
-        self.setup_code = ""
+        with self._account_lock:
+            if not self.needs_setup or self.path is None:
+                raise AuthError("An account already exists", 409)
+            self._count_attempt(client)
+            if not (self.setup_code and hmac.compare_digest(code.encode(), self.setup_code.encode())):
+                raise AuthError("Wrong setup code", 403)
+            self._clear_failures(client)
+            username = username.strip()
+            if not username:
+                raise AuthError("Choose a username")
+            _check_password(password)
+            password_hash = hash_password(password, iterations=self.iterations)
+            _save(self.path, username, password_hash)
+            self.password_hash = password_hash
+            self.username = username
+            self.setup_code = ""
         return self._new_session()
 
     def change_password(self, token: str | None, current: str, new: str) -> None:
@@ -195,58 +198,69 @@ class Auth:
 
         Raises:
             AuthError: 409 in env mode, 401 without a live session, 403 for a
-                wrong current password, 400 for a too-short new one.
+                wrong current password, 400 for a too-short new one, 500 if
+                the account can't be written (the old password keeps working).
         """
         if self.mode != "file" or self.path is None:
             raise AuthError("The password is set by PIHUB_PASSWORD", 409)
         if token is None or self.session_user(token) is None:
             raise AuthError("Sign in required", 401)
         key = "session:" + token
-        self._check_throttle(key)
-        if not verify_password(current, self.password_hash):
-            self._record_failure(key)
-            raise AuthError("Current password is wrong", 403)
-        self._clear_failures(key)
-        _check_password(new)
-        self.password_hash = hash_password(new, iterations=self.iterations)
-        self._save(self.path)
+        with self._account_lock:
+            self._count_attempt(key)
+            if not verify_password(current, self.password_hash):
+                raise AuthError("Current password is wrong", 403)
+            self._clear_failures(key)
+            _check_password(new)
+            password_hash = hash_password(new, iterations=self.iterations)
+            _save(self.path, self.username, password_hash)
+            self.password_hash = password_hash
         with self._lock:
             self._sessions = {t: s for t, s in self._sessions.items() if t == token}
 
-    def _check_throttle(self, client: str) -> None:
-        with self._lock:
-            locked_until = self._failures.get(client, (0, 0.0))[1]
-        wait = locked_until - self.clock()
-        if wait > 0:
-            raise Throttled(math.ceil(wait))
+    def _count_attempt(self, client: str) -> None:
+        """Counts an attempt before it is checked, so parallel requests can't slip past the limit.
 
-    def _record_failure(self, client: str) -> None:
-        """Counts a failed attempt; the MAX_FAILURES-th locks the client out for LOCKOUT_SECONDS."""
+        The MAX_FAILURES-th attempt in a row arms a LOCKOUT_SECONDS lockout;
+        a successful attempt calls _clear_failures, which also disarms it.
+
+        Raises:
+            Throttled: The client is locked out.
+        """
+        now = self.clock()
         with self._lock:
-            count = self._failures.get(client, (0, 0.0))[0] + 1
-            if count >= MAX_FAILURES:
-                self._failures[client] = (0, self.clock() + LOCKOUT_SECONDS)
-            else:
-                self._failures[client] = (count, 0.0)
+            count, locked_until = self._failures.get(client, (0, 0.0))
+            if locked_until > now:
+                raise Throttled(math.ceil(locked_until - now))
+            count += 1
+            self._failures[client] = (0, now + LOCKOUT_SECONDS) if count >= MAX_FAILURES else (count, 0.0)
 
     def _clear_failures(self, client: str) -> None:
         with self._lock:
             self._failures.pop(client, None)
-
-    def _save(self, path: str) -> None:
-        """Writes the account to ``path`` atomically, readable only by its owner."""
-        tmp = path + ".tmp"
-        fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-        with os.fdopen(fd, "w") as f:
-            json.dump({"username": self.username, "password": self.password_hash}, f, indent=2)
-            f.write("\n")
-        os.replace(tmp, path)
 
     def _new_session(self) -> str:
         token = secrets.token_urlsafe(32)
         with self._lock:
             self._sessions[token] = (self.username, self.clock() + SESSION_SECONDS)
         return token
+
+
+def _save(path: str, username: str, password_hash: str) -> None:
+    """Writes the account to ``path`` atomically, readable only by its owner.
+
+    Raises:
+        AuthError: The file can't be written (status 500).
+    """
+    tmp = path + ".tmp"
+    try:
+        fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        with os.fdopen(fd, "w") as f:
+            json.dump({"username": username, "password": password_hash}, f, indent=2)
+            f.write("\n")
+        os.replace(tmp, path)
+    except OSError as e:
+        raise AuthError(f"Could not save the account to {path}: {e.strerror}", 500) from e
 
 
 def _check_password(password: str) -> None:
