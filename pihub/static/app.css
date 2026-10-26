@@ -237,6 +237,12 @@ button { cursor: pointer; }
 .me { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--n500); min-width: 0; max-width: 220px; }
 .me .btn-ghost { white-space: nowrap; }
 @media (max-width: 720px) { .me { order: 2; } .me .btn-ghost { min-height: 44px; } }
+.account { padding-top: 0; }
+.account h2 { font-size: 16px; font-weight: 500; margin: 8px 0 12px; }
+.pwform { display: flex; flex-direction: column; gap: 10px; max-width: 360px; }
+.pwform label { display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: var(--n500); }
+.pwform input { padding: 9px 12px; background: var(--surface); border: 1px solid var(--n800); border-radius: 8px; }
+.pwform input:focus { border-color: var(--accent); }
 .signed-out .tabs, .signed-out .search, .signed-out .meta, .signed-out #host,
 .signed-out #view-dash, .signed-out #view-set { display: none !important; }
 .lock input { padding: 9px 12px; background: var(--surface); border: 1px solid var(--n800); border-radius: 8px; }

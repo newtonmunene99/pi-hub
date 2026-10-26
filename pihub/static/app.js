@@ -209,6 +209,8 @@ async function boot() {
   $('#view-login').hidden = $('#view-setup').hidden = true;
   $('#me').hidden = !(me.enabled && me.authenticated);
   $('#me-name').textContent = me.username || '';
+  $('#account').hidden = !me.canChangePassword;
+  $('#pw-user').value = me.username || '';
   route(); refresh();
   if (!ticking) {
     ticking = true;
@@ -249,6 +251,22 @@ $('#setupform').addEventListener('submit', async e => {
     $('#setupform').reset(); msg.textContent = '';
     boot();
   } catch (err) { msg.textContent = 'Could not reach pi-hub.'; }
+});
+
+$('#pwform').addEventListener('submit', async e => {
+  e.preventDefault();
+  const msg = $('#pwmsg'), pw = $('#pw-new').value;
+  msg.classList.add('err');
+  if (pw.length < 8) { msg.textContent = 'Use a password of at least 8 characters.'; return; }
+  if (pw !== $('#pw-new2').value) { msg.textContent = "New passwords don't match."; return; }
+  msg.classList.remove('err'); msg.textContent = 'Changing…';
+  try {
+    const r = await api('api/password', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ current: $('#pw-cur').value, new: pw }) });
+    const out = await r.json().catch(() => ({}));
+    if (!r.ok) { msg.classList.add('err'); msg.textContent = out.error || `Could not change the password (${r.status})`; return; }
+    $('#pw-cur').value = $('#pw-new').value = $('#pw-new2').value = '';
+    msg.textContent = 'Password changed. Other devices are signed out.';
+  } catch (err) { if (!err.auth) { msg.classList.add('err'); msg.textContent = 'Could not reach pi-hub.'; } }
 });
 
 /* ── settings ── */

@@ -79,6 +79,16 @@
       <div class="foot"><span class="msg" id="msg"></span><button class="btn-ghost" id="cancel">Cancel</button><button class="btn-out btn-fill" id="save">Save changes</button></div>
     </div>
   </section>
+  <section class="settings account" id="account" hidden>
+    <h2>Account</h2>
+    <form id="pwform" class="pwform">
+      <input type="text" name="username" autocomplete="username" id="pw-user" hidden>
+      <label>Current password<input id="pw-cur" type="password" autocomplete="current-password" required></label>
+      <label>New password<input id="pw-new" type="password" autocomplete="new-password" minlength="8" required></label>
+      <label>Repeat new password<input id="pw-new2" type="password" autocomplete="new-password" minlength="8" required></label>
+      <div class="foot"><span class="msg" id="pwmsg" role="status"></span><button class="btn-out btn-fill" type="submit">Change password</button></div>
+    </form>
+  </section>
 </main>
 
 <div class="backdrop" id="modal" hidden></div>
