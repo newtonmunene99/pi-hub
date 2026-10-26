@@ -10,6 +10,26 @@ FAST = 1000  # PBKDF2 iterations: the real default is too slow for tests
 KNOWN_HASH = "g4BiOBrcHGnGTAdCcoA+WrLOFA69L2c9HA5vVpt2o7A="
 
 
+class Clock:
+    """A settable stand-in for time.time."""
+
+    def __init__(self, now=1_000_000.0):
+        self.now = now
+
+    def __call__(self):
+        return self.now
+
+
+def env_auth(clock=None):
+    return auth.Auth(
+        "env",
+        username="admin",
+        password_hash=auth.hash_password("s3cretpass", iterations=FAST),
+        iterations=FAST,
+        clock=clock or Clock(),
+    )
+
+
 class HashTests(unittest.TestCase):
     def test_round_trip(self):
         stored = auth.hash_password("correct horse", iterations=FAST)
@@ -95,6 +115,71 @@ class ModeTests(unittest.TestCase):
                 f.write(body)
             with self.subTest(body=body), self.assertRaisesRegex(auth.AuthError, "corrupt"):
                 self.mode({})
+
+
+class SessionTests(unittest.TestCase):
+    def test_login_and_expiry(self):
+        clock = Clock()
+        a = env_auth(clock)
+        token = a.login("admin", "s3cretpass", "10.0.0.2")
+        self.assertEqual(a.session_user(token), "admin")
+        clock.now += auth.SESSION_SECONDS - 1
+        self.assertEqual(a.session_user(token), "admin")
+        clock.now += 2
+        self.assertIsNone(a.session_user(token))
+
+    def test_wrong_credentials_same_message(self):
+        a = env_auth()
+        for user, pw in (("admin", "nope"), ("root", "s3cretpass"), ("", "")):
+            with self.subTest(user=user), self.assertRaises(auth.AuthError) as cm:
+                a.login(user, pw, "10.0.0.2")
+            self.assertEqual((str(cm.exception), cm.exception.status), ("Wrong username or password", 401))
+
+    def test_tokens_are_distinct(self):
+        a = env_auth()
+        self.assertNotEqual(a.login("admin", "s3cretpass", "10.0.0.2"), a.login("admin", "s3cretpass", "10.0.0.2"))
+
+    def test_logout(self):
+        a = env_auth()
+        token = a.login("admin", "s3cretpass", "10.0.0.2")
+        a.logout(token)
+        a.logout(None)
+        a.logout("unknown")
+        self.assertIsNone(a.session_user(token))
+
+    def test_unknown_token(self):
+        a = env_auth()
+        self.assertIsNone(a.session_user("forged"))
+        self.assertIsNone(a.session_user(None))
+        self.assertIsNone(a.session_user(""))
+
+    def test_status(self):
+        a = env_auth()
+        token = a.login("admin", "s3cretpass", "10.0.0.2")
+        self.assertEqual(
+            a.status(token),
+            {"enabled": True, "authenticated": True, "username": "admin", "setup": False, "canChangePassword": False},
+        )
+        self.assertEqual(
+            a.status(None),
+            {"enabled": True, "authenticated": False, "username": "", "setup": False, "canChangePassword": False},
+        )
+
+    def test_status_when_off(self):
+        self.assertEqual(
+            auth.Auth("off").status(None),
+            {"enabled": False, "authenticated": True, "username": "", "setup": False, "canChangePassword": False},
+        )
+
+    def test_status_in_file_mode(self):
+        fresh = auth.Auth("file", path=os.devnull)
+        self.assertTrue(fresh.status(None)["setup"])
+        stored = auth.Auth(
+            "file", username="admin", password_hash=auth.hash_password("s3cretpass", iterations=FAST), path=os.devnull
+        )
+        token = stored.login("admin", "s3cretpass", "10.0.0.2")
+        self.assertEqual(stored.status(token)["canChangePassword"], True)
+        self.assertEqual(stored.status(None)["canChangePassword"], False)
 
 
 if __name__ == "__main__":

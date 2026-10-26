@@ -12,14 +12,19 @@ import hmac
 import json
 import logging
 import os
+import secrets
+import threading
 import time
 from collections.abc import Callable, Mapping
+from typing import Any
 
 from .config import resolve_secret
 
 logger = logging.getLogger(__name__)
 
 PBKDF2_ITERATIONS = 600_000
+SESSION_SECONDS = 30 * 24 * 3600
+COOKIE_NAME = "pihub_session"
 _SCHEME = "pbkdf2_sha256"
 _OFF_VALUES = ("off", "0", "false", "no")
 
@@ -85,6 +90,8 @@ class Auth:
         self.setup_code = setup_code
         self.iterations = iterations
         self.clock = clock
+        self._lock = threading.Lock()
+        self._sessions: dict[str, tuple[str, float]] = {}  # token -> (username, expires)
 
     @property
     def enabled(self) -> bool:
@@ -95,6 +102,57 @@ class Auth:
     def needs_setup(self) -> bool:
         """True in file mode until the admin account has been created."""
         return self.mode == "file" and not self.username
+
+    def status(self, token: str | None) -> dict[str, Any]:
+        """What the UI needs to know: whether sign-in is on, and who is signed in."""
+        user = self.session_user(token) if self.enabled else None
+        return {
+            "enabled": self.enabled,
+            "authenticated": not self.enabled or user is not None,
+            "username": user or "",
+            "setup": self.needs_setup,
+            "canChangePassword": user is not None and self.mode == "file",
+        }
+
+    def login(self, username: str, password: str, client: str) -> str:
+        """Checks the credentials and returns a new session token.
+
+        Raises:
+            AuthError: Wrong username or password (status 401). The message
+                doesn't say which, and the password is always hashed, so
+                neither the reply nor its timing reveals the username.
+        """
+        user_ok = hmac.compare_digest(username.encode(), self.username.encode())
+        password_ok = bool(self.password_hash) and verify_password(password, self.password_hash)
+        if not (user_ok and password_ok):
+            raise AuthError("Wrong username or password", 401)
+        return self._new_session()
+
+    def session_user(self, token: str | None) -> str | None:
+        """The username a live session token belongs to, or None."""
+        if not token:
+            return None
+        now = self.clock()
+        with self._lock:
+            session = self._sessions.get(token)
+            if session is None:
+                return None
+            if session[1] <= now:
+                del self._sessions[token]
+                return None
+            return session[0]
+
+    def logout(self, token: str | None) -> None:
+        """Ends a session; unknown tokens are ignored."""
+        if token:
+            with self._lock:
+                self._sessions.pop(token, None)
+
+    def _new_session(self) -> str:
+        token = secrets.token_urlsafe(32)
+        with self._lock:
+            self._sessions[token] = (self.username, self.clock() + SESSION_SECONDS)
+        return token
 
 
 def _load_account(path: str) -> tuple[str, str]:
