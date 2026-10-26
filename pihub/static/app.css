@@ -243,6 +243,8 @@ button { cursor: pointer; }
 .pwform label { display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: var(--n500); }
 .pwform input { padding: 9px 12px; background: var(--surface); border: 1px solid var(--n800); border-radius: 8px; }
 .pwform input:focus { border-color: var(--accent); }
+.pwform .foot { flex-wrap: wrap; }
+.pwform .foot .btn-out { white-space: nowrap; margin-left: auto; }
 .signed-out .tabs, .signed-out .search, .signed-out .meta, .signed-out #host,
 .signed-out #view-dash, .signed-out #view-set { display: none !important; }
 .lock input { padding: 9px 12px; background: var(--surface); border: 1px solid var(--n800); border-radius: 8px; }
