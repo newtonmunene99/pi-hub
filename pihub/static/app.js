@@ -138,7 +138,7 @@ function renderModal() {
 function render() {
   if (!data) return;
   renderHeader(); renderStats(); renderPinned(); renderCats(); renderGrid(); renderSide(); renderModal();
-  $('#tab-set').hidden = !!data.readonly;
+  $('#tab-set').hidden = !!data.readonly && !me?.canChangePassword;  // read-only still allows a password change
   $('#tab-host').hidden = !data.hostAgent || !!data.readonly;
 }
 
@@ -184,10 +184,11 @@ let me = null, ticking = false;
 const signedOut = () => document.body.classList.contains('signed-out');
 const postJSON = (path, body) => fetch(path, { method: 'POST', cache: 'no-store', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
 
-// Every API call goes through here: a 401 means the session is gone, so show the sign-in screen.
+// Every API call goes through here: a 401 means the session is gone. boot() asks the server
+// which screen to show (sign-in, or setup if the account was reset).
 async function api(path, opts = {}) {
   const r = await fetch(path, { cache: 'no-store', ...opts });
-  if (r.status === 401) { showAuth('login'); throw Object.assign(new Error('Sign in required'), { auth: true }); }
+  if (r.status === 401) { boot(); throw Object.assign(new Error('Sign in required'), { auth: true }); }
   return r;
 }
 
@@ -197,6 +198,9 @@ function showAuth(view) {
   if (me) me.authenticated = false;
   $('#me').hidden = true;
   selected = null; renderModal(); closeHost();
+  // Nothing from the last session stays on the page.
+  data = null; cfg = null;
+  for (const id of ['#stats', '#pinned', '#cats', '#grid', '#side', '#rows', '#notices']) $(id).innerHTML = '';
   $('#view-login').hidden = view !== 'login';
   $('#view-setup').hidden = view !== 'setup';
   if (!wasOut) $(view === 'login' ? '#li-user' : '#su-code').focus();
@@ -233,7 +237,6 @@ $('#loginform').addEventListener('submit', async e => {
 
 $('#signout').addEventListener('click', async () => {
   try { await postJSON('api/logout', {}); } catch (e) { /* signed out locally either way */ }
-  data = null; cfg = null;
   showAuth('login');
   $('#li-user').focus();
 });
@@ -247,6 +250,7 @@ $('#setupform').addEventListener('submit', async e => {
   try {
     const r = await postJSON('api/setup', { code: $('#su-code').value.trim(), username: $('#su-user').value, password: pw });
     const out = await r.json().catch(() => ({}));
+    if (r.status === 409) { boot(); return; }  // the account was created meanwhile (another tab): go to sign-in
     if (!r.ok) { msg.textContent = out.error || `Setup failed (${r.status})`; return; }
     $('#setupform').reset(); msg.textContent = '';
     boot();
@@ -281,6 +285,8 @@ async function loadSettings() {
   let r;
   try { r = await api('api/config'); } catch (e) { return; }
   cfg = await r.json();
+  $('#editor').hidden = !!cfg.readonly;  // read-only: only the Account section is shown
+  if (cfg.readonly) return;
   cfg.services.forEach(s => { s._key = ''; s._password = ''; });
   open = new Set();
   renderRows();
@@ -441,7 +447,10 @@ function renderHost() {
 
 async function hostDo(kind, fn) {
   hostBusy = kind; hostMsg = null; renderHost();
-  try { hostMsg = await fn(); } catch (e) { if (e.auth) return; hostMsg = { err: true, text: e.message }; }
+  try { hostMsg = await fn(); } catch (e) {
+    if (e.auth) { hostBusy = false; return; }  // signed out mid-action: don't leave the buttons disabled
+    hostMsg = { err: true, text: e.message };
+  }
   hostBusy = false;
   if (kind !== 'reboot' || hostMsg?.err) { try { hostState = await hostApi('api/host'); } catch (e) { /* keep last */ } }
   renderHost();

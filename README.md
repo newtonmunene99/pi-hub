@@ -110,7 +110,7 @@ Want another app? See [adding an integration](CONTRIBUTING.md#adding-an-integrat
 | `PIHUB_HOST` | `0.0.0.0` | bind address |
 | `PIHUB_USERNAME` | — | admin username, together with `PIHUB_PASSWORD`; leave both unset to create the account in the browser |
 | `PIHUB_PASSWORD` | — | admin password (with `PIHUB_USERNAME`); accepts `env:NAME` and `file:/path` |
-| `PIHUB_AUTH` | — | `off` turns sign-in off, e.g. behind a reverse proxy that already authenticates |
+| `PIHUB_AUTH` | — | `off` (or `0`, `false`, `no`) turns sign-in off, e.g. behind a reverse proxy that already authenticates |
 | `PIHUB_AUTH_FILE` | `auth.json` next to the config | where a browser-created account is stored |
 | `PIHUB_READONLY` | — | `1` disables editing in the UI |
 | `PIHUB_AGENT_SOCKET` | — | host agent socket: enables the restart and Claude Code buttons ([setup](docs/configuration.md#host-actions-restart-and-claude-code-optional)) |
