@@ -1,0 +1,4 @@
+index.html: #view-setup form (one-time-code, username, new-password x2, minlength 8).
+app.js: boot() shows setup when /api/auth reports setup; the form checks length and match before POST /api/setup, shows server errors (wrong code, throttled), then boots the dashboard.
+Checked: served page has the setup form; /api/auth reports setup: true in a fresh file-mode run.
+Files: pihub/static/index.html, pihub/static/app.js.
