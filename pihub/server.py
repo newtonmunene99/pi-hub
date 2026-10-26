@@ -116,11 +116,16 @@ def make_handler(
             cookie for this host (say, from an app on another port) has a
             value it doesn't like, which would sign the user out.
             """
+            candidates = []
             for pair in self.headers.get("Cookie", "").split(";"):
                 name, sep, value = pair.strip().partition("=")
-                if sep and name == COOKIE_NAME:
-                    return value or None
-            return None
+                if sep and name == COOKIE_NAME and value:
+                    candidates.append(value)
+            # Another app on this host can set its own pihub_session (browsers send the
+            # most specific path first), so prefer whichever value is a live session.
+            live = [v for v in candidates if access.session_user(v) is not None]
+            preferred = live or candidates
+            return preferred[0] if preferred else None
 
         def signed_in(self) -> bool:
             return not access.enabled or access.session_user(self.session_token()) is not None

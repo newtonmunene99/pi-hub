@@ -260,12 +260,36 @@ class SignInTests(ServerCase):
                 with self.subTest(cookie=cookie):
                     self.assertEqual(self.call("GET", "/api/state", headers={"Cookie": cookie})[0], 200)
 
+    def test_stray_session_cookie_from_another_app_is_skipped(self):
+        self.start(auth=env_auth())
+        _, headers = self.login()
+        session = headers["Cookie"]
+        for stray in ("pihub_session=bad", "pihub_session="):
+            with self.subTest(stray=stray):
+                self.assertEqual(self.call("GET", "/api/state", headers={"Cookie": f"{stray}; {session}"})[0], 200)
+
+    def test_cookie_name_must_match_exactly(self):
+        self.start(auth=env_auth())
+        _, headers = self.login()
+        token = headers["Cookie"].split("=", 1)[1]
+        for cookie in (f"xpihub_session={token}", f"pihub_sessionx={token}", f"pihub_session={token}=x"):
+            with self.subTest(cookie=cookie):
+                self.assertEqual(self.call("GET", "/api/state", headers={"Cookie": cookie})[0], 401)
+
     def test_bypass_shapes_stay_locked(self):
         self.start(auth=env_auth())
-        for path in ("/api//state", "/api/state/", "/api/%73tate", "//api/state", "/api/state?x=1", "/api/config#x"):
+        expected = {
+            "/api//state": 401,
+            "/api/state/": 401,
+            "/api/%73tate": 401,
+            "//api/state": 401,  # http.server collapses the leading slashes
+            "/api/state?x=1": 401,
+            "/api/config#x": 401,
+        }
+        for path, code in expected.items():
             with self.subTest(path=path):
                 status, data, _ = self.call("GET", path)
-                self.assertNotEqual(status, 200)
+                self.assertEqual(status, code)
                 self.assertNotIn(b"Radarr", data)
         self.assertEqual(self.call("HEAD", "/api/state")[0], 401)
 
@@ -276,11 +300,13 @@ class SignInTests(ServerCase):
 
     def test_malformed_bodies_get_400(self):
         self.start(auth=env_auth())
-        status, _ = self.raw_post("/api/login", b"", {"Content-Type": "application/json", "Content-Length": "-1"})
-        self.assertEqual(status, 400)
-        nested = b"[" * 100_000
-        headers = {"Content-Type": "application/json", "Content-Length": str(len(nested))}
-        self.assertEqual(self.raw_post("/api/login", nested, headers)[0], 400)
+        with self.subTest("negative Content-Length"):
+            headers = {"Content-Type": "application/json", "Content-Length": "-1"}
+            self.assertEqual(self.raw_post("/api/login", b"", headers)[0], 400)
+        with self.subTest("deeply nested JSON"):
+            nested = b"[" * 100_000
+            headers = {"Content-Type": "application/json", "Content-Length": str(len(nested))}
+            self.assertEqual(self.raw_post("/api/login", nested, headers)[0], 400)
 
     def test_auth_off_serves_everything(self):
         self.start()
