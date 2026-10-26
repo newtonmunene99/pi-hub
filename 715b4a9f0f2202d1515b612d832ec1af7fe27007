@@ -1,0 +1,4 @@
+Adds Auth.login, session_user, logout and status, plus SESSION_SECONDS and COOKIE_NAME.
+Sessions: secrets.token_urlsafe(32) -> (username, expiry) under a lock; expired tokens are removed when checked.
+status() reports enabled/authenticated/username/setup/canChangePassword for the UI.
+Files: pihub/auth.py, tests/test_auth.py.
