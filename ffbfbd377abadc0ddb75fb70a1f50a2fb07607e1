@@ -1,0 +1,3 @@
+Fix from phase review: _new_session prunes expired sessions; _count_attempt prunes the failure map past MAX_TRACKED_CLIENTS (drops unlocked clients, then keeps the half with the latest lockouts); strings are encoded with surrogatepass.
+Tests now use literal 5/60/30 days, check the default iteration count through hash_password, assert setup clears the code, and remove an unused noqa left in the previous commit.
+Files: pihub/auth.py, tests/test_auth.py.
