@@ -1,0 +1,3 @@
+Fix from phase review: auth_from_env relied on os.path.exists, which is False for dangling symlinks and unstat-able parents, dropping into setup mode. _load_account now raises FileNotFoundError only for a genuinely absent, non-symlink path; every other failure is AuthError.
+Also: PIHUB_PASSWORD=env:NAME reads NAME from the environ argument instead of os.environ.
+Files: pihub/auth.py, tests/test_auth.py.
