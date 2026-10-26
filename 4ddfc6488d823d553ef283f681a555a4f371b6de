@@ -1,0 +1,3 @@
+Adds Auth.change_password(token, current, new): 409 in env mode, 401 without a live session, 403 wrong current password (throttled per session), 400 short new password.
+On success, rewrites auth.json (0600, atomic) and keeps only the calling session.
+Files: pihub/auth.py, tests/test_auth.py.
