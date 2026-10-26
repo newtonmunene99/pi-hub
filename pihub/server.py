@@ -22,7 +22,6 @@ session cookie set by /api/login; the static UI stays public so the sign-in
 screen can load. PIHUB_READONLY=1 disables saving settings and host actions.
 """
 
-import http.cookies
 import json
 import os
 import urllib.parse
@@ -111,14 +110,17 @@ def make_handler(
                 self.wfile.write(data)
 
         def session_token(self) -> str | None:
-            """The session token from the request's cookie, if any; a malformed cookie counts as none."""
-            jar = http.cookies.SimpleCookie()
-            try:
-                jar.load(self.headers.get("Cookie", ""))
-            except http.cookies.CookieError:
-                return None
-            morsel = jar.get(COOKIE_NAME)
-            return morsel.value if morsel else None
+            """The session token from the request's Cookie header, if any.
+
+            Parsed by hand: http.cookies drops the whole header when any other
+            cookie for this host (say, from an app on another port) has a
+            value it doesn't like, which would sign the user out.
+            """
+            for pair in self.headers.get("Cookie", "").split(";"):
+                name, sep, value = pair.strip().partition("=")
+                if sep and name == COOKIE_NAME:
+                    return value or None
+            return None
 
         def signed_in(self) -> bool:
             return not access.enabled or access.session_user(self.session_token()) is not None
@@ -179,9 +181,14 @@ def make_handler(
                 return self.send(415, {"error": "Content-Type must be application/json"})
             try:
                 length = int(self.headers.get("Content-Length", 0))
+                if length < 0:
+                    raise ValueError("Invalid Content-Length")
                 if length > MAX_BODY:
                     return self.send(413, {"error": "Request too large"})
-                body = json.loads(self.rfile.read(length) or b"{}")
+                try:
+                    body = json.loads(self.rfile.read(length) or b"{}")
+                except RecursionError:
+                    raise ValueError("JSON nested too deeply") from None
                 if account_action:
                     if not isinstance(body, dict):
                         raise ValueError("Expected a JSON object")

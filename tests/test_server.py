@@ -6,7 +6,7 @@ import threading
 import unittest
 
 from pihub import config
-from pihub.auth import MAX_FAILURES, Auth, hash_password
+from pihub.auth import Auth, hash_password
 from pihub.hostagent import AgentError
 from pihub.hub import Hub
 from pihub.server import serve
@@ -35,6 +35,18 @@ class ServerCase(unittest.TestCase):
         data = resp.read()
         conn.close()
         return resp.status, data, resp
+
+    def raw_post(self, path, body, headers):
+        """POSTs exact bytes and headers (no JSON encoding, no automatic Content-Length)."""
+        conn = http.client.HTTPConnection("127.0.0.1", self.port, timeout=5)
+        conn.putrequest("POST", path)
+        for k, v in headers.items():
+            conn.putheader(k, v)
+        conn.endheaders(body)
+        resp = conn.getresponse()
+        data = resp.read()
+        conn.close()
+        return resp.status, data
 
     def login(self, pw="s3cretpass"):
         """Signs in as admin; returns the status and headers carrying the session cookie."""
@@ -223,11 +235,9 @@ class SignInTests(ServerCase):
 
     def test_throttled_login_sends_retry_after(self):
         self.start(auth=env_auth())
-        for _ in range(5):
-            self.login("nope")
+        self.assertEqual([self.login("nope")[0] for _ in range(6)], [401] * 5 + [429])
         status, _, resp = self.call("POST", "/api/login", {"username": "admin", "password": "s3cretpass"}, JSON)
         self.assertEqual((status, resp.getheader("Retry-After")), (429, "60"))
-        self.assertEqual(MAX_FAILURES, 5)
 
     def test_garbage_cookie_is_not_a_session(self):
         self.start(auth=env_auth())
@@ -235,9 +245,42 @@ class SignInTests(ServerCase):
             with self.subTest(cookie=cookie):
                 self.assertEqual(self.call("GET", "/api/state", headers={"Cookie": cookie})[0], 401)
 
-    def test_readonly_still_allows_sign_in(self):
+    def test_readonly_still_allows_sign_in_and_out(self):
         self.start(auth=env_auth(), readonly=True)
-        self.assertEqual(self.login()[0], 200)
+        status, headers = self.login()
+        self.assertEqual(status, 200)
+        self.assertEqual(self.call("POST", "/api/logout", {}, {**headers, **JSON})[0], 200)
+
+    def test_session_survives_unparsable_neighbour_cookies(self):
+        self.start(auth=env_auth())
+        _, headers = self.login()
+        session = headers["Cookie"]
+        for junk in ('a={"x":1}', "x=a b", "a=\u00e9", "a=1;", 'a="q\\"', "flag"):
+            for cookie in (f"{junk}; {session}", f"{session}; {junk}"):
+                with self.subTest(cookie=cookie):
+                    self.assertEqual(self.call("GET", "/api/state", headers={"Cookie": cookie})[0], 200)
+
+    def test_bypass_shapes_stay_locked(self):
+        self.start(auth=env_auth())
+        for path in ("/api//state", "/api/state/", "/api/%73tate", "//api/state", "/api/state?x=1", "/api/config#x"):
+            with self.subTest(path=path):
+                status, data, _ = self.call("GET", path)
+                self.assertNotEqual(status, 200)
+                self.assertNotIn(b"Radarr", data)
+        self.assertEqual(self.call("HEAD", "/api/state")[0], 401)
+
+    def test_signed_in_host_reads(self):
+        self.start(auth=env_auth(), agent=FakeAgent())
+        _, headers = self.login()
+        self.assertEqual(self.call("GET", "/api/host", headers=headers)[0], 200)
+
+    def test_malformed_bodies_get_400(self):
+        self.start(auth=env_auth())
+        status, _ = self.raw_post("/api/login", b"", {"Content-Type": "application/json", "Content-Length": "-1"})
+        self.assertEqual(status, 400)
+        nested = b"[" * 100_000
+        headers = {"Content-Type": "application/json", "Content-Length": str(len(nested))}
+        self.assertEqual(self.raw_post("/api/login", nested, headers)[0], 400)
 
     def test_auth_off_serves_everything(self):
         self.start()
@@ -264,8 +307,15 @@ class SetupEndpointTests(ServerCase):
         self.assertIn("HttpOnly", resp.getheader("Set-Cookie"))
         headers = {"Cookie": resp.getheader("Set-Cookie").split(";")[0]}
         self.assertEqual(self.call("GET", "/api/state", headers=headers)[0], 200)
+        self.assertNotIn(b"s3cretpass", data)
+        self.assertNotIn(b"abcd1234", data)
         self.assertEqual(os.stat(self.auth_path).st_mode & 0o777, 0o600)
         self.assertEqual(self.call("POST", "/api/setup", {**body, "code": "abcd1234"}, JSON)[0], 409)
+
+    def test_setup_works_under_readonly(self):
+        self.start(auth=Auth("file", path=self.auth_path, setup_code="abcd1234", iterations=1000), readonly=True)
+        body = {"code": "abcd1234", "username": "admin", "password": "s3cretpass"}
+        self.assertEqual(self.call("POST", "/api/setup", body, JSON)[0], 200)
 
     def test_setup_needs_json(self):
         self.start(auth=Auth("file", path=self.auth_path, setup_code="abcd1234", iterations=1000))
@@ -294,7 +344,8 @@ class PasswordEndpointTests(ServerCase):
         status, data, _ = self.call("POST", "/api/password", bad, {**mine, **JSON})
         self.assertEqual((status, json.loads(data)["error"]), (403, "Current password is wrong"))
         self.assertEqual(self.call("POST", "/api/password", good, {**mine, "Content-Type": "text/plain"})[0], 415)
-        self.assertEqual(self.call("POST", "/api/password", good, {**mine, **JSON})[0], 200)
+        status, data, _ = self.call("POST", "/api/password", good, {**mine, **JSON})
+        self.assertEqual((status, json.loads(data)), (200, {"ok": True}))
         self.assertEqual(self.call("GET", "/api/state", headers=mine)[0], 200)
         self.assertEqual(self.call("GET", "/api/state", headers=other)[0], 401)
         self.assertEqual(self.login("s3cretpass")[0], 401)
