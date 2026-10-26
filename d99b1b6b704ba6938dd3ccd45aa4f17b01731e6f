@@ -1,4 +1,4 @@
-Fix from phase review: throttling counted failures after the (slow) PBKDF2 check, so 10 parallel wrong logins got 9 through; now _count_attempt reserves the attempt under the lock and success clears it.
+Fix from review: throttling counted failures after the (slow) PBKDF2 check, so 10 parallel wrong logins got 9 through; now _count_attempt reserves the attempt under the lock and success clears it.
 setup and change_password hold an account lock; _save is a module function that writes before fields are assigned, and turns OSError into AuthError(500).
 Tests: barrier-released threads for logins and setups, failing saves for setup and password change.
 Files: pihub/auth.py, tests/test_auth.py.
