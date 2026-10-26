@@ -4,3 +4,10 @@ Fix from round-2 phase review (user chose to fix all and continue after the veri
 - _save unlinks a stale .tmp, opens with O_EXCL, fsyncs, then replaces.
 - env: password values stripped; read-only-dir test skipped as root.
 Files: pihub/auth.py, tests/test_auth.py.
+
+Phase verification: Auth core
+Tests: python3 -W error::ResourceWarning -m unittest discover -s tests -t . -> OK (all suites); tests.test_auth 53 tests.
+Coverage: pihub/auth.py 100% (232 statements).
+Timing: hash_password at 600,000 iterations = 0.17 s on Raspberry Pi 5.
+Independent verifier: round 1 Reject (9 issues) -> fixed in 3997afe, d99b1b6, ffbfbd3; round 2 Reject (1 issue + nits) -> user chose fix all and continue; fixed in c114506.
+Hand check: none needed, nothing user-visible in this phase (no HTTP or UI yet).
