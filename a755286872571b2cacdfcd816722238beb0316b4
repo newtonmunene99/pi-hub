@@ -1,0 +1,3 @@
+Adds Auth.setup and MIN_PASSWORD_LENGTH (8); auth_from_env logs "setup code <8 hex chars>" at WARNING when file mode has no account.
+setup(): 409 once an account exists or outside file mode, 403 wrong code (constant-time compare), 400 empty username or short password; writes auth.json atomically with mode 0600, clears the code, returns a session.
+Files: pihub/auth.py, tests/test_auth.py, .gitignore.
