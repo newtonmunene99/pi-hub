@@ -1,0 +1,4 @@
+index.html: #account section with #pwform (hidden username field so password managers file the change under the right account, current-password, new-password x2).
+app.js: shown when /api/auth reports canChangePassword; validates length and match, POSTs /api/password through api(), shows the server error or a confirmation.
+app.css: form layout matching the settings inputs.
+Files: pihub/static/index.html, pihub/static/app.js, pihub/static/app.css.
