@@ -234,6 +234,9 @@ button { cursor: pointer; }
 .lock .btn-out { padding: 10px 14px; }
 #view-login .lock, #view-setup .lock { padding: 0 16px; }
 /* signed out: only the brand and the sign-in or setup form */
+.me { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--n500); min-width: 0; max-width: 220px; }
+.me .btn-ghost { white-space: nowrap; }
+@media (max-width: 720px) { .me { order: 2; } .me .btn-ghost { min-height: 44px; } }
 .signed-out .tabs, .signed-out .search, .signed-out .meta, .signed-out #host,
 .signed-out #view-dash, .signed-out #view-set { display: none !important; }
 .lock input { padding: 9px 12px; background: var(--surface); border: 1px solid var(--n800); border-radius: 8px; }

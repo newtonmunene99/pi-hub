@@ -195,6 +195,7 @@ function showAuth(view) {
   const wasOut = signedOut();
   document.body.classList.add('signed-out');
   if (me) me.authenticated = false;
+  $('#me').hidden = true;
   selected = null; renderModal(); closeHost();
   $('#view-login').hidden = view !== 'login';
   $('#view-setup').hidden = view !== 'setup';
@@ -206,6 +207,8 @@ async function boot() {
   if (me.enabled && !me.authenticated) { showAuth(me.setup ? 'setup' : 'login'); return; }
   document.body.classList.remove('signed-out');
   $('#view-login').hidden = $('#view-setup').hidden = true;
+  $('#me').hidden = !(me.enabled && me.authenticated);
+  $('#me-name').textContent = me.username || '';
   route(); refresh();
   if (!ticking) {
     ticking = true;
@@ -224,6 +227,13 @@ $('#loginform').addEventListener('submit', async e => {
     $('#li-pw').value = ''; $('#limsg').textContent = '';
     boot();
   } catch (err) { $('#limsg').textContent = 'Could not reach pi-hub.'; }
+});
+
+$('#signout').addEventListener('click', async () => {
+  try { await postJSON('api/logout', {}); } catch (e) { /* signed out locally either way */ }
+  data = null; cfg = null;
+  showAuth('login');
+  $('#li-user').focus();
 });
 
 $('#setupform').addEventListener('submit', async e => {
