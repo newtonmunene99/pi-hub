@@ -1,3 +1,3 @@
-Fix from final-phase review: api() calls boot() on 401 (re-reads /api/auth: setup vs login); showAuth clears data/cfg and the rendered dashboard/settings containers; hostDo resets hostBusy on auth errors; setup 409 -> boot(); read-only keeps the Settings tab when canChangePassword and hides the services editor (FR8); README lists all PIHUB_AUTH off values.
+Fix from review: api() calls boot() on 401 (re-reads /api/auth: setup vs login); showAuth clears data/cfg and the rendered dashboard/settings containers; hostDo resets hostBusy on auth errors; setup 409 -> boot(); read-only keeps the Settings tab when canChangePassword and hides the services editor (FR8); README lists all PIHUB_AUTH off values.
 Accepted as is: an expiry while on Settings is noticed on Save.
 Files: pihub/static/app.js, README.md.
