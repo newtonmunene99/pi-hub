@@ -1,0 +1,4 @@
+server.py: make_handler/serve take auth: Auth | None instead of password; PUBLIC_API = health, auth, login, logout; any other /api/ path without a live session -> 401 "Sign in required" (also for unknown paths, so endpoints are not revealed). Cookie parsed with http.cookies; malformed cookie = no session. Login/logout are JSON-only and not blocked by PIHUB_READONLY. AuthError -> its status; Throttled adds Retry-After. /api/state no longer has "locked".
+__main__.py: builds Auth with auth_from_env (demo -> off), exits 2 on AuthError; docstring lists the new variables.
+Checked by hand: demo serves without cookie; env mode 401 then 200 after login; password-only exits 2; PIHUB_AUTH=off logs its warning; password not in log.
+Files: pihub/server.py, pihub/__main__.py, tests/test_server.py.
