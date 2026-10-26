@@ -1,0 +1,6 @@
+Fix from round-2 phase review (user chose to fix all and continue after the verifier budget):
+- credential generation counter read with the hash in login and re-checked under the lock in _new_session; change_password bumps it.
+- MAX_SETUP_GUESSES=50 global wrong-code cap regenerates and logs the code (_new_setup_code).
+- _save unlinks a stale .tmp, opens with O_EXCL, fsyncs, then replaces.
+- env: password values stripped; read-only-dir test skipped as root.
+Files: pihub/auth.py, tests/test_auth.py.
