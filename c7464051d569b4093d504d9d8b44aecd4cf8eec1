@@ -1,0 +1,4 @@
+index.html: #me (username + #signout) in the header, outside .meta which is hidden on phones.
+app.js: boot() shows #me when sign-in is on and authenticated (username via textContent); Sign out POSTs /api/logout, clears cached data and shows the sign-in view; showAuth hides #me.
+app.css: .me layout; 44px touch target under 720px.
+Files: pihub/static/index.html, pihub/static/app.js, pihub/static/app.css.
