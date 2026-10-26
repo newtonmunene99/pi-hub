@@ -1,0 +1,2 @@
+Docs only. Changelog: Added (sign-in, setup code, change password, sign out, throttling, PIHUB_AUTH=off) and Changed (PIHUB_PASSWORD now the admin password, paired with PIHUB_USERNAME) kept short since the old settings-only password has no current users.
+Files: README.md, docs/configuration.md, compose.example.yml, SECURITY.md, CONTRIBUTING.md, CHANGELOG.md.
