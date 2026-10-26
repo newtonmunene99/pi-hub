@@ -26,7 +26,7 @@ mv compose.example.yml compose.yml
 docker compose up -d
 ```
 
-Open `http://<your-server>:8000`.
+Open `http://<your-server>:8000`. The first visit asks you to create the admin account with a one-time setup code printed in the log (`docker logs pi-hub`). To set the account up front instead, see [Signing in](docs/configuration.md#signing-in).
 
 The container runs as UID 1000 — make sure it can write `config/` (`sudo chown -R 1000 config`).
 
@@ -108,7 +108,10 @@ Want another app? See [adding an integration](CONTRIBUTING.md#adding-an-integrat
 | `PIHUB_CONFIG` | `/config/config.json` | config file path |
 | `PIHUB_PORT` | `8000` | listen port |
 | `PIHUB_HOST` | `0.0.0.0` | bind address |
-| `PIHUB_PASSWORD` | — | require a password for the settings page |
+| `PIHUB_USERNAME` | — | admin username, together with `PIHUB_PASSWORD`; leave both unset to create the account in the browser |
+| `PIHUB_PASSWORD` | — | admin password (with `PIHUB_USERNAME`); accepts `env:NAME` and `file:/path` |
+| `PIHUB_AUTH` | — | `off` turns sign-in off, e.g. behind a reverse proxy that already authenticates |
+| `PIHUB_AUTH_FILE` | `auth.json` next to the config | where a browser-created account is stored |
 | `PIHUB_READONLY` | — | `1` disables editing in the UI |
 | `PIHUB_AGENT_SOCKET` | — | host agent socket: enables the restart and Claude Code buttons ([setup](docs/configuration.md#host-actions-restart-and-claude-code-optional)) |
 | `PIHUB_DEMO` | — | `1` serves fake data |
@@ -117,11 +120,12 @@ Want another app? See [adding an integration](CONTRIBUTING.md#adding-an-integrat
 
 ## Security
 
-pi-hub is meant for your home network. It has no user accounts: anyone who can reach it can see the dashboard. If you expose it beyond your LAN, put it behind a reverse proxy with authentication.
+pi-hub is meant for your home network. It has a single admin sign-in that protects the dashboard, the settings and host actions. If you expose it beyond your LAN, still put it behind a reverse proxy with HTTPS.
 
+- Sign-in uses a session cookie that scripts can't read (HttpOnly, SameSite=Strict). The password is stored only as a salted PBKDF2 hash, and repeated wrong guesses are slowed down.
 - API keys are never sent to the browser. In the settings page they're write-only.
 - If a service's host, port, scheme, base path or kind changes, its stored keys are dropped, so they can't be redirected to another machine.
-- `PIHUB_PASSWORD` protects the settings page; `PIHUB_READONLY=1` removes editing completely.
+- `PIHUB_READONLY=1` removes editing of services and host actions completely.
 - Strict Content-Security-Policy, no third-party requests (fonts are bundled).
 
 Found a vulnerability? Please follow [SECURITY.md](SECURITY.md).

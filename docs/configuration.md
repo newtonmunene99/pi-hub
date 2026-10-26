@@ -108,6 +108,29 @@ pi-hub needs to reach each service, and it reads host stats from `/proc` and `/s
 - **Bridge networking:** publish `8000:8000` and set each service's `host` to your server's LAN IP (or a container name on a shared Docker network).
 - **Other machines:** set `host` (and `scheme`/`port`) per service.
 
+## Signing in
+
+pi-hub has one admin account. Signing in protects everything: the dashboard, the settings and host actions. Only the `/api/health` check stays open.
+
+There are two ways to create the account:
+
+- **In the browser (default).** With `PIHUB_USERNAME` and `PIHUB_PASSWORD` unset, pi-hub logs a one-time setup code on start:
+
+  ```
+  WARNING pihub.auth: No admin account yet. Open pi-hub and enter setup code 3f9a1c07 to create one.
+  ```
+
+  Open pi-hub, enter the code (`docker logs pi-hub` shows it), and choose a username and password (8+ characters). The account is saved, as a salted hash, in `auth.json` next to `config.json` (set `PIHUB_AUTH_FILE` to put it elsewhere). You can change the password later under **Settings → Account**. After 50 wrong codes, pi-hub logs a new one.
+- **From the environment.** Set both `PIHUB_USERNAME` and `PIHUB_PASSWORD`. `PIHUB_PASSWORD` accepts `env:NAME` and `file:/run/secrets/...` like other secrets. The password can't be changed in the browser then. Setting only one of the two is an error and pi-hub won't start.
+
+Sessions last 30 days. Restarting pi-hub signs everyone out. Changing the password signs out every other device.
+
+After 5 wrong passwords in a row from one address, that address must wait a minute. Behind a reverse proxy, every visitor comes from the proxy's address, so wrong guesses lock everyone out for that minute. pi-hub ignores `X-Forwarded-For` on purpose, because any client can fake it.
+
+**Forgot the password?** For a browser-created account, delete `auth.json` and restart pi-hub. It logs a new setup code. For an environment account, change `PIHUB_PASSWORD`.
+
+**Behind an authenticating proxy** (Authelia, Authentik, oauth2-proxy…), you can set `PIHUB_AUTH=off` to skip pi-hub's own sign-in. pi-hub then logs a warning, because anyone who can reach it directly can use it. If your proxy serves pi-hub over HTTPS, the session cookie still works; pi-hub can't tell, so it doesn't mark the cookie `Secure` itself.
+
 ## Host actions: restart and Claude Code (optional)
 
 With the **host agent** running, a **Host** link appears in the header. It opens a panel where you can:
@@ -166,7 +189,7 @@ The socket is only accessible to its owner and group, and the image runs as UID 
 | `PIHUB_AGENT_CLAUDE` | `claude` | Claude Code executable; empty turns sessions off |
 | `PIHUB_AGENT_REBOOT` | `sudo -n systemctl reboot` | reboot command; empty turns restart off |
 
-**Security:** anyone who can open the dashboard can use these buttons, so set `PIHUB_PASSWORD`. The panel then asks for the settings password. `PIHUB_READONLY=1` turns host actions off. The endpoints only accept JSON, so another website can't trigger them from your browser. Sessions run under *your* Claude account, so only you can work in them, but anyone who can use the panel can start or stop them.
+**Security:** the panel is only available after [signing in](#signing-in). With sign-in turned off (`PIHUB_AUTH=off`), anyone who can reach pi-hub can use these buttons, so keep it behind an authenticating proxy. `PIHUB_READONLY=1` turns host actions off. The endpoints only accept JSON, so another website can't trigger them from your browser. Sessions run under *your* Claude account, so only you can work in them, but anyone who can use the panel can start or stop them.
 
 ## Environment variables
 

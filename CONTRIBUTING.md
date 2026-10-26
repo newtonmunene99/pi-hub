@@ -41,6 +41,7 @@ pihub/
   server.py        HTTP server, JSON API, security headers
   hub.py           polling loop, 24h history, /api/state
   config.py        config.json loading, validation, secret handling
+  auth.py          sign-in: password hashing, sessions, first-run setup
   integrations.py  one class per supported app (kind)
   system.py        CPU / memory / temperature / fan / disk stats
   schedule.py      "next run" sidebar entries

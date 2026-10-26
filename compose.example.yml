@@ -11,7 +11,10 @@ services:
     environment:
       - TZ=Etc/UTC                 # your timezone, e.g. Africa/Nairobi
       - PIHUB_PORT=8000
-      # - PIHUB_PASSWORD=change-me # protect the settings page
+      # Sign-in: on first visit pi-hub asks for a setup code from `docker logs pi-hub`.
+      # Or fix the admin account here instead:
+      # - PIHUB_USERNAME=admin
+      # - PIHUB_PASSWORD=change-me
       # - PIHUB_READONLY=1         # or disable editing entirely
       # - PIHUB_AGENT_SOCKET=/run/pihub-agent/agent.sock   # restart + Claude Code buttons (docs/configuration.md)
       # API keys referenced from config.json as "env:NAME":
@@ -21,7 +24,7 @@ services:
       - PROWLARR_API_KEY=${PROWLARR_API_KEY:-}
       - QBITTORRENT_PASSWORD=${QBITTORRENT_PASSWORD:-}
     volumes:
-      - ./config:/config                       # config.json + history.json
+      - ./config:/config                       # config.json, history.json, auth.json
       - /mnt/media:/disks/media:ro             # one line per disk in "system.disks"
       - /path/to/kometa/config/logs:/kometa-logs:ro   # only if you use the kometa kind
       # - /etc/argononed.conf:/argononed.conf:ro      # Argon ONE fan curve
