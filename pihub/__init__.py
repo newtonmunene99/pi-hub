@@ -1,3 +1,3 @@
 """Pi Hub - a small, dependency-free launcher and status dashboard for self-hosted services."""
 
-__version__ = "0.3.1"
+__version__ = "0.4.0"

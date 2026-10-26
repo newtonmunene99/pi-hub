@@ -4,6 +4,8 @@ All notable changes are listed here. The format follows [Keep a Changelog](https
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-10-26
+
 ### Added
 
 - Sign-in for the whole dashboard with one admin account. On first visit, create it with a setup code printed in the log, or set `PIHUB_USERNAME` and `PIHUB_PASSWORD`. Change the password under Settings → Account, and sign out from the header. Repeated wrong passwords are slowed down. `PIHUB_AUTH=off` turns sign-in off for setups behind an authenticating proxy. See *Signing in* in docs/configuration.md.
