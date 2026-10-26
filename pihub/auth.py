@@ -29,6 +29,7 @@ COOKIE_NAME = "pihub_session"
 MIN_PASSWORD_LENGTH = 8
 MAX_FAILURES = 5
 LOCKOUT_SECONDS = 60
+MAX_TRACKED_CLIENTS = 1024
 _SCHEME = "pbkdf2_sha256"
 _OFF_VALUES = ("off", "0", "false", "no")
 
@@ -47,10 +48,15 @@ class AuthError(ValueError):
             self.status = status
 
 
+def _utf8(text: str) -> bytes:
+    """Encodes any str, including lone surrogates that JSON input can carry."""
+    return text.encode("utf-8", "surrogatepass")
+
+
 def hash_password(password: str, *, salt: bytes | None = None, iterations: int = PBKDF2_ITERATIONS) -> str:
     """Returns a salted PBKDF2-SHA256 hash of ``password`` in the stored format."""
     salt = os.urandom(16) if salt is None else salt
-    digest = hashlib.pbkdf2_hmac("sha256", password.encode(), salt, iterations)
+    digest = hashlib.pbkdf2_hmac("sha256", _utf8(password), salt, iterations)
     return f"{_SCHEME}${iterations}${base64.b64encode(salt).decode()}${base64.b64encode(digest).decode()}"
 
 
@@ -62,7 +68,7 @@ def verify_password(password: str, stored: str) -> bool:
             return False
         raw_salt = base64.b64decode(salt, validate=True)
         expected = base64.b64decode(digest, validate=True)
-        actual = hashlib.pbkdf2_hmac("sha256", password.encode(), raw_salt, int(iterations))
+        actual = hashlib.pbkdf2_hmac("sha256", _utf8(password), raw_salt, int(iterations))
     except (ValueError, binascii.Error):
         return False
     return hmac.compare_digest(actual, expected)
@@ -139,7 +145,7 @@ class Auth:
                 neither the reply nor its timing reveals the username.
         """
         self._count_attempt(client)
-        user_ok = hmac.compare_digest(username.encode(), self.username.encode())
+        user_ok = hmac.compare_digest(_utf8(username), _utf8(self.username))
         password_ok = bool(self.password_hash) and verify_password(password, self.password_hash)
         if not (user_ok and password_ok):
             raise AuthError("Wrong username or password", 401)
@@ -179,7 +185,7 @@ class Auth:
             if not self.needs_setup or self.path is None:
                 raise AuthError("An account already exists", 409)
             self._count_attempt(client)
-            if not (self.setup_code and hmac.compare_digest(code.encode(), self.setup_code.encode())):
+            if not (self.setup_code and hmac.compare_digest(_utf8(code), _utf8(self.setup_code))):
                 raise AuthError("Wrong setup code", 403)
             self._clear_failures(client)
             username = username.strip()
@@ -232,8 +238,20 @@ class Auth:
             count, locked_until = self._failures.get(client, (0, 0.0))
             if locked_until > now:
                 raise Throttled(math.ceil(locked_until - now))
+            if client not in self._failures and len(self._failures) >= MAX_TRACKED_CLIENTS:
+                self._prune_failures(now)
             count += 1
             self._failures[client] = (0, now + LOCKOUT_SECONDS) if count >= MAX_FAILURES else (count, 0.0)
+
+    def _prune_failures(self, now: float) -> None:
+        """Forgets clients that aren't locked out; if all are, the ones whose lockout ends soonest.
+
+        Called with the lock held, so memory stays bounded however many addresses fail.
+        """
+        self._failures = {c: f for c, f in self._failures.items() if f[1] > now}
+        if len(self._failures) >= MAX_TRACKED_CLIENTS:
+            keep = sorted(self._failures.items(), key=lambda item: item[1][1])[-(MAX_TRACKED_CLIENTS // 2) :]
+            self._failures = dict(keep)
 
     def _clear_failures(self, client: str) -> None:
         with self._lock:
@@ -241,8 +259,10 @@ class Auth:
 
     def _new_session(self) -> str:
         token = secrets.token_urlsafe(32)
+        now = self.clock()
         with self._lock:
-            self._sessions[token] = (self.username, self.clock() + SESSION_SECONDS)
+            self._sessions = {t: s for t, s in self._sessions.items() if s[1] > now}
+            self._sessions[token] = (self.username, now + SESSION_SECONDS)
         return token
 
 

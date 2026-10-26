@@ -4,6 +4,7 @@ import re
 import tempfile
 import threading
 import unittest
+from unittest import mock
 
 from pihub import auth
 
@@ -52,7 +53,7 @@ class HashTests(unittest.TestCase):
                 self.assertFalse(auth.verify_password("pw", bad))
 
     def test_default_iterations(self):
-        self.assertEqual(auth.PBKDF2_ITERATIONS, 600_000)
+        self.assertTrue(auth.hash_password("pw").startswith("pbkdf2_sha256$600000$"))
 
 
 class ModeTests(unittest.TestCase):
@@ -144,7 +145,7 @@ class SessionTests(unittest.TestCase):
         a = env_auth(clock)
         token = a.login("admin", "s3cretpass", "10.0.0.2")
         self.assertEqual(a.session_user(token), "admin")
-        clock.now += auth.SESSION_SECONDS - 1
+        clock.now += 30 * 24 * 3600 - 1
         self.assertEqual(a.session_user(token), "admin")
         clock.now += 2
         self.assertIsNone(a.session_user(token))
@@ -227,6 +228,7 @@ class SetupTests(unittest.TestCase):
         token = a.setup(code, " admin ", "s3cretpass", "10.0.0.2")
         self.assertEqual(a.session_user(token), "admin")
         self.assertFalse(a.needs_setup)
+        self.assertEqual(a.setup_code, "")
         self.assertEqual(os.stat(self.path).st_mode & 0o777, 0o600)
         with open(self.path) as f:
             saved = json.load(f)
@@ -279,12 +281,12 @@ class ThrottleTests(unittest.TestCase):
     def test_lockout_and_recovery(self):
         clock = Clock()
         a = env_auth(clock)
-        self.fail_logins(a, "10.0.0.2", auth.MAX_FAILURES)
+        self.fail_logins(a, "10.0.0.2", 5)
         with self.assertRaises(auth.Throttled) as cm:
             a.login("admin", "s3cretpass", "10.0.0.2")  # right password, still locked
         self.assertEqual((cm.exception.status, cm.exception.retry_after), (429, 60))
         self.assertIsInstance(a.login("admin", "s3cretpass", "10.0.0.9"), str)  # other clients unaffected
-        clock.now += auth.LOCKOUT_SECONDS - 0.5
+        clock.now += 59.5
         with self.assertRaises(auth.Throttled) as cm:
             a.login("admin", "s3cretpass", "10.0.0.2")
         self.assertEqual(cm.exception.retry_after, 1)
@@ -293,9 +295,9 @@ class ThrottleTests(unittest.TestCase):
 
     def test_success_resets_count(self):
         a = env_auth()
-        self.fail_logins(a, "10.0.0.2", auth.MAX_FAILURES - 1)
+        self.fail_logins(a, "10.0.0.2", 4)
         a.login("admin", "s3cretpass", "10.0.0.2")
-        self.fail_logins(a, "10.0.0.2", auth.MAX_FAILURES - 1)
+        self.fail_logins(a, "10.0.0.2", 4)
         self.assertIsInstance(a.login("admin", "s3cretpass", "10.0.0.2"), str)
 
     def test_setup_code_guesses_are_throttled(self):
@@ -303,7 +305,7 @@ class ThrottleTests(unittest.TestCase):
         self.addCleanup(tmp.cleanup)
         path = os.path.join(tmp.name, "auth.json")
         a = auth.Auth("file", path=path, setup_code="abcd1234", iterations=FAST, clock=Clock())
-        for _ in range(auth.MAX_FAILURES):
+        for _ in range(5):
             with self.assertRaises(auth.AuthError):
                 a.setup("wrong", "admin", "s3cretpass", "10.0.0.2")
         with self.assertRaises(auth.Throttled):
@@ -347,7 +349,7 @@ class ChangePasswordTests(unittest.TestCase):
         self.assertIsNotNone(self.a.session_user(self.other))
 
     def test_wrong_current_password_is_throttled(self):
-        for _ in range(auth.MAX_FAILURES):
+        for _ in range(5):
             with self.assertRaises(auth.AuthError):
                 self.a.change_password(self.mine, "nope", "n3wpassword")
         with self.assertRaises(auth.Throttled):
@@ -370,7 +372,7 @@ def run_together(n, fn):
         barrier.wait()
         try:
             results.append(fn())
-        except Exception as e:  # noqa: BLE001 - collected for the assertions
+        except Exception as e:
             results.append(e)
 
     threads = [threading.Thread(target=worker) for _ in range(n)]
@@ -431,6 +433,56 @@ class ConcurrencyTests(unittest.TestCase):
             a.change_password(token, "s3cretpass", "n3wpassword")
         self.assertEqual(cm.exception.status, 500)
         self.assertIsInstance(a.login("admin", "s3cretpass", "10.0.0.2"), str)
+
+
+class LimitsTests(unittest.TestCase):
+    def test_expired_sessions_are_pruned(self):
+        clock = Clock()
+        a = env_auth(clock)
+        for _ in range(3):
+            a.login("admin", "s3cretpass", "10.0.0.2")
+        clock.now += 30 * 24 * 3600 + 1
+        a.login("admin", "s3cretpass", "10.0.0.2")
+        self.assertEqual(len(a._sessions), 1)
+
+    def test_failure_map_is_bounded(self):
+        a = env_auth()
+        for i in range(1500):
+            with self.assertRaises(auth.AuthError):
+                a.login("admin", "nope", f"10.{i // 256}.{i % 256}.1")
+        self.assertLessEqual(len(a._failures), 1024)
+
+    def test_lockouts_survive_pruning(self):
+        a = env_auth()
+        for _ in range(5):
+            with self.assertRaises(auth.AuthError):
+                a.login("admin", "nope", "10.9.9.9")
+        for i in range(1500):
+            with self.assertRaises(auth.AuthError):
+                a.login("admin", "nope", f"10.{i // 256}.{i % 256}.1")
+        with self.assertRaises(auth.Throttled):
+            a.login("admin", "s3cretpass", "10.9.9.9")
+
+    def test_bounded_even_when_every_client_is_locked_out(self):
+        clock = Clock()
+        a = env_auth(clock)
+        with mock.patch.object(auth, "MAX_TRACKED_CLIENTS", 4):
+            for i in range(6):
+                clock.now += 1  # later clients' lockouts end later
+                for _ in range(5):
+                    with self.assertRaises(auth.AuthError):
+                        a.login("admin", "nope", f"10.0.0.{i}")
+            self.assertLessEqual(len(a._failures), 4)
+            with self.assertRaises(auth.Throttled):
+                a.login("admin", "s3cretpass", "10.0.0.5")  # the newest lockout is kept
+
+    def test_lone_surrogates_are_just_wrong_credentials(self):
+        a = env_auth()
+        for user, pw in (("\ud800", "s3cretpass"), ("admin", "\udfff")):
+            with self.subTest(user=user, pw=pw), self.assertRaises(auth.AuthError) as cm:
+                a.login(user, pw, "10.0.0.2")
+            self.assertEqual(cm.exception.status, 401)
+        self.assertFalse(auth.verify_password("\ud800", auth.hash_password("x", iterations=FAST)))
 
 
 if __name__ == "__main__":
