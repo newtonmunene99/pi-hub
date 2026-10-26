@@ -1,3 +1,3 @@
-Fix from phase 2 review: session_token splits the Cookie header on ";" and takes the first pihub_session pair (SimpleCookie.load silently dropped everything on values like x=a b or JSON). Negative Content-Length and RecursionError from json.loads are 400s.
+Fix from review: session_token splits the Cookie header on ";" and takes the first pihub_session pair (SimpleCookie.load silently dropped everything on values like x=a b or JSON). Negative Content-Length and RecursionError from json.loads are 400s.
 New regression tests: neighbour junk cookies, bypass path shapes and HEAD stay 401, signed-in GET /api/host, 6th wrong login is 429, logout and setup under readonly, no secrets in setup/password replies, malformed bodies.
 Files: pihub/server.py, tests/test_server.py.
