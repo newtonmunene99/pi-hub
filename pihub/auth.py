@@ -190,6 +190,29 @@ class Auth:
         self.setup_code = ""
         return self._new_session()
 
+    def change_password(self, token: str | None, current: str, new: str) -> None:
+        """Replaces the password and signs out every other session.
+
+        Raises:
+            AuthError: 409 in env mode, 401 without a live session, 403 for a
+                wrong current password, 400 for a too-short new one.
+        """
+        if self.mode != "file" or self.path is None:
+            raise AuthError("The password is set by PIHUB_PASSWORD", 409)
+        if token is None or self.session_user(token) is None:
+            raise AuthError("Sign in required", 401)
+        key = "session:" + token
+        self._check_throttle(key)
+        if not verify_password(current, self.password_hash):
+            self._record_failure(key)
+            raise AuthError("Current password is wrong", 403)
+        self._clear_failures(key)
+        _check_password(new)
+        self.password_hash = hash_password(new, iterations=self.iterations)
+        self._save(self.path)
+        with self._lock:
+            self._sessions = {t: s for t, s in self._sessions.items() if t == token}
+
     def _check_throttle(self, client: str) -> None:
         with self._lock:
             locked_until = self._failures.get(client, (0, 0.0))[1]

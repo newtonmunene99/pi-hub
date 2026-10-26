@@ -291,5 +291,55 @@ class ThrottleTests(unittest.TestCase):
         self.assertFalse(os.path.exists(path))
 
 
+class ChangePasswordTests(unittest.TestCase):
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.path = os.path.join(tmp.name, "auth.json")
+        self.a = auth.Auth("file", path=self.path, setup_code="abcd1234", iterations=FAST, clock=Clock())
+        self.mine = self.a.setup("abcd1234", "admin", "s3cretpass", "10.0.0.2")
+        self.other = self.a.login("admin", "s3cretpass", "10.0.0.3")
+
+    def test_change_revokes_other_sessions(self):
+        self.a.change_password(self.mine, "s3cretpass", "n3wpassword")
+        self.assertEqual(self.a.session_user(self.mine), "admin")
+        self.assertIsNone(self.a.session_user(self.other))
+        with self.assertRaises(auth.AuthError):
+            self.a.login("admin", "s3cretpass", "10.0.0.2")
+        self.assertIsInstance(self.a.login("admin", "n3wpassword", "10.0.0.2"), str)
+        with open(self.path) as f:
+            saved = json.load(f)
+        self.assertEqual(saved["username"], "admin")
+        self.assertTrue(auth.verify_password("n3wpassword", saved["password"]))
+        self.assertEqual(os.stat(self.path).st_mode & 0o777, 0o600)
+
+    def test_refusals(self):
+        cases = [
+            (self.mine, "nope", "n3wpassword", 403),
+            (self.mine, "s3cretpass", "short", 400),
+            ("forged", "s3cretpass", "n3wpassword", 401),
+            (None, "s3cretpass", "n3wpassword", 401),
+        ]
+        for token, cur, new, status in cases:
+            with self.subTest(status=status), self.assertRaises(auth.AuthError) as cm:
+                self.a.change_password(token, cur, new)
+            self.assertEqual(cm.exception.status, status)
+        self.assertIsNotNone(self.a.session_user(self.other))
+
+    def test_wrong_current_password_is_throttled(self):
+        for _ in range(auth.MAX_FAILURES):
+            with self.assertRaises(auth.AuthError):
+                self.a.change_password(self.mine, "nope", "n3wpassword")
+        with self.assertRaises(auth.Throttled):
+            self.a.change_password(self.mine, "s3cretpass", "n3wpassword")
+
+    def test_env_mode(self):
+        a = env_auth()
+        token = a.login("admin", "s3cretpass", "10.0.0.2")
+        with self.assertRaises(auth.AuthError) as cm:
+            a.change_password(token, "s3cretpass", "n3wpassword")
+        self.assertEqual(cm.exception.status, 409)
+
+
 if __name__ == "__main__":
     unittest.main()
