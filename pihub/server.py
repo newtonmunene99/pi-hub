@@ -4,6 +4,7 @@
   GET  /api/auth     whether sign-in is on and who is signed in
   POST /api/login    sign in ({"username", "password"}); sets the session cookie
   POST /api/logout   sign out
+  POST /api/setup    create the admin account on first run ({"code", "username", "password"})
   GET  /api/state    dashboard data
   GET  /api/config   services for the settings page (secrets masked)
   POST /api/config   save services edited in the settings page
@@ -49,7 +50,7 @@ HOST_ACTIONS = {
     "/api/host/reboot": ("reboot", ()),
 }
 # Reachable without a session: the probe, and what it takes to sign in.
-PUBLIC_API = frozenset({"/api/health", "/api/auth", "/api/login", "/api/logout"})
+PUBLIC_API = frozenset({"/api/health", "/api/auth", "/api/login", "/api/logout", "/api/setup"})
 SECURITY_HEADERS = {
     "X-Content-Type-Options": "nosniff",
     "Referrer-Policy": "no-referrer",
@@ -167,7 +168,7 @@ def make_handler(
             if self.needs_sign_in(path):
                 return None
             host_action = HOST_ACTIONS.get(path)
-            account_action = path in ("/api/login", "/api/logout")
+            account_action = path in ("/api/login", "/api/logout", "/api/setup")
             if path != "/api/config" and not account_action and not (host_action and agent):
                 return self.send(404, {"error": "Not found"})
             if readonly and not account_action:
@@ -195,14 +196,17 @@ def make_handler(
                 return self.send(400, {"error": str(e)})
 
         def account(self, path: str, body: dict[str, Any]) -> None:
-            """Handles sign-in and sign-out."""
+            """Handles sign-in, sign-out and first-run setup."""
             if path == "/api/logout":
                 access.logout(self.session_token())
                 cleared = f"{COOKIE_NAME}=; HttpOnly; SameSite=Strict; Path=/; Max-Age=0"
                 return self.send(200, {"ok": True}, headers={"Set-Cookie": cleared})
             try:
                 user, password = str(body.get("username", "")), str(body.get("password", ""))
-                token = access.login(user, password, self.client_address[0])
+                if path == "/api/setup":
+                    token = access.setup(str(body.get("code", "")), user, password, self.client_address[0])
+                else:
+                    token = access.login(user, password, self.client_address[0])
             except AuthError as e:
                 return self.send_auth_error(e)
             return self.send_session(token)

@@ -246,5 +246,38 @@ class SignInTests(ServerCase):
         self.assertEqual(json.loads(self.call("GET", "/api/auth")[1])["enabled"], False)
 
 
+class SetupEndpointTests(ServerCase):
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.auth_path = os.path.join(tmp.name, "auth.json")
+
+    def test_first_run(self):
+        self.start(auth=Auth("file", path=self.auth_path, setup_code="abcd1234", iterations=1000))
+        self.assertTrue(json.loads(self.call("GET", "/api/auth")[1])["setup"])
+        body = {"code": "wrong", "username": "admin", "password": "s3cretpass"}
+        status, data, _ = self.call("POST", "/api/setup", body, JSON)
+        self.assertEqual((status, json.loads(data)["error"]), (403, "Wrong setup code"))
+        status, data, resp = self.call("POST", "/api/setup", {**body, "code": "abcd1234"}, JSON)
+        self.assertEqual(status, 200, data)
+        self.assertEqual(json.loads(data)["username"], "admin")
+        self.assertIn("HttpOnly", resp.getheader("Set-Cookie"))
+        headers = {"Cookie": resp.getheader("Set-Cookie").split(";")[0]}
+        self.assertEqual(self.call("GET", "/api/state", headers=headers)[0], 200)
+        self.assertEqual(os.stat(self.auth_path).st_mode & 0o777, 0o600)
+        self.assertEqual(self.call("POST", "/api/setup", {**body, "code": "abcd1234"}, JSON)[0], 409)
+
+    def test_setup_needs_json(self):
+        self.start(auth=Auth("file", path=self.auth_path, setup_code="abcd1234", iterations=1000))
+        body = {"code": "abcd1234", "username": "admin", "password": "s3cretpass"}
+        self.assertEqual(self.call("POST", "/api/setup", body, {"Content-Type": "text/plain"})[0], 415)
+        self.assertFalse(os.path.exists(self.auth_path))
+
+    def test_setup_refused_in_env_mode(self):
+        self.start(auth=env_auth())
+        body = {"code": "x", "username": "admin", "password": "s3cretpass"}
+        self.assertEqual(self.call("POST", "/api/setup", body, JSON)[0], 409)
+
+
 if __name__ == "__main__":
     unittest.main()
