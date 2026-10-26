@@ -1,8 +1,8 @@
 Found in the browser hand check (Playwright screenshot of Settings > Account after a password change). app.css: .pwform .foot wraps, the button never wraps.
 Files: pihub/static/app.css.
 
-Phase verification: UI and docs (last phase)
+Verification: UI and docs
 Tests: full unittest suite, ruff, mypy clean; node --check app.js.
 Browser hand check, run by the agent with Playwright + headless Chromium against real pi-hub processes (desktop 1280x800 and phone 390x844): 23/23 checks passed - setup screen, wrong code, password mismatch, setup -> dashboard, sign out clears page, wrong/right password, autocomplete attributes, phone layout (no horizontal scroll, Sign out 44px), Account password change, other device signed out on next refresh, reset (auth.json deleted) -> open tab shows setup, env mode (no setup, no Account), read-only (only Account), no JS errors. Screenshots reviewed; one visual defect (button wrap) fixed in this commit.
 Not covered by automation: a real password manager offering to save, a physical phone.
-Independent verifier (whole track): round 1 Reject -> fixed 6498c23; round 2 Approve with nits -> fixed c6e5417.
+Independent verifier (whole track): pass 1 Reject -> fixed 6498c23; pass 2 Approve with nits -> fixed c6e5417.
