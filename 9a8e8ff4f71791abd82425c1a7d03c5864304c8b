@@ -1,0 +1,10 @@
+Let a service name its container
+
+Services accept an optional "container" field (stripped, at most 64
+characters, stored only when set) naming the Docker container that runs
+them, for when it differs from the service's id or name. It is passed
+through /api/config and the dashboard's service views ("" when unset), so
+image updates can be matched to services.
+
+Files: pihub/config.py, pihub/models.py, pihub/hub.py, tests/test_config.py,
+tests/test_hub.py
