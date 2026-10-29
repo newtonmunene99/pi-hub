@@ -23,6 +23,8 @@ const visible = () => data.services.filter(s => (cat === 'All' || s.category ===
 const pct = n => Math.max(0, Math.min(100, n)).toFixed(0);
 // The server only keeps http(s) links; checked again so a stray value never becomes a javascript: href.
 const safeLink = u => /^https?:\/\//i.test(u || '') ? u : '';
+const updFor = id => (data.updates || []).find(u => u.services.includes(id));
+const updBadge = s => updFor(s.id) ? '<span class="upd-badge" title="Update available">Update</span>' : '';
 
 /* ── dashboard ── */
 function renderHeader() {
@@ -53,7 +55,7 @@ function renderPinned() {
   const pins = data.services.filter(s => s.pinned && matches(s));
   $('#pinned').innerHTML = pins.map(s => `
     <a class="pin${s.up === false ? ' off' : ''}" ${linkAttrs(s)}>
-      <div class="h"><span>${esc(s.name)}</span><i class="dot ${dotCls(s)}"></i></div>
+      <div class="h"><span>${esc(s.name)}${updBadge(s)}</span><i class="dot ${dotCls(s)}"></i></div>
       <div class="big">${esc(portLabel(s))}</div>
       <div class="s ell">${esc(s.stat)}</div></a>`).join('');
   $('#pinned-label').hidden = $('#pinned').hidden = !pins.length;
@@ -72,7 +74,7 @@ function renderGrid() {
     <a class="card${s.up === false ? ' off' : ''}" ${linkAttrs(s)}>
       <div class="r1">
         <span class="mono-badge" aria-hidden="true">${esc(s.icon)}</span>
-        <div class="id"><div>${esc(s.name)}<i class="dot pdot ${dotCls(s)}"></i></div><div class="ell desc">${esc(s.description)}</div><div class="phone-stat ell">${esc(s.stat)}</div></div>
+        <div class="id"><div>${esc(s.name)}${updBadge(s)}<i class="dot pdot ${dotCls(s)}"></i></div><div class="ell desc">${esc(s.description)}</div><div class="phone-stat ell">${esc(s.stat)}</div></div>
         <i class="dot ${dotCls(s)}" title="${esc(s.state)}"></i>
         <button class="info" data-info="${esc(s.id)}" title="Details" aria-label="${esc(s.name)} details">${INFO_SVG}</button>
       </div>
@@ -128,6 +130,7 @@ function renderModal() {
   const u = urlOf(s), max = Math.max(1, ...s.bars.filter(b => b.ms != null).map(b => b.ms));
   const bars = s.bars.map(b => `<i class="${b.state}" style="height:${b.ms != null ? Math.max(8, b.ms / max * 100) : b.state === 'down' ? 100 : 6}%" title="${b.ms != null ? b.ms + ' ms' : b.state === 'down' ? 'offline' : 'no data'}"></i>`).join('');
   const job = data.schedule.find(x => x.service === s.id || x.name === s.name);
+  const upd = updFor(s.id), updLink = safeLink(upd?.hubLink);
   const keepFocus = document.activeElement?.dataset?.copy !== undefined;
   m.innerHTML = `
     <div class="modal" role="dialog" aria-modal="true" aria-labelledby="mname">
@@ -136,6 +139,8 @@ function renderModal() {
         <span class="st"><i class="dot ${dotCls(s)}"></i>${esc(s.state)}</span>
         <button class="x" data-close title="Close" aria-label="Close">×</button></div>
       ${u ? `<div class="url"><span class="ell">${esc(u)}</span><button data-copy="${esc(u)}">Copy</button></div>` : ''}
+      ${upd ? `<div class="upd-line"><span class="upd-badge">Update available</span><span class="chip">${esc(upd.tag)}</span>
+        ${updLink ? `<a href="${esc(updLink)}" target="_blank" rel="noopener noreferrer">Release notes ↗</a>` : ''}</div>` : ''}
       <div class="kv">
         <div><span class="label">${s.cron ? 'Next run' : s.up === false ? 'Down for' : 'Uptime'}</span><b>${esc(s.cron ? (job?.when || '—') : s.since || '—')}</b></div>
         <div><span class="label">Response</span><b>${s.ms != null ? s.ms + ' ms' : '—'}</b></div>
@@ -366,6 +371,7 @@ function advanced(s, i) {
     <label>Link URL override<input data-f="url" class="m" value="${esc(s.url)}" placeholder="https://radarr.example.com"></label>
     <label>Description<input data-f="description" value="${esc(s.description)}"></label>
     <label>Icon (1–2 chars)<input data-f="icon" value="${esc(s.icon)}" maxlength="2"></label>
+    <label title="Docker container name, if it differs from the service name. Matches image updates from Diun.">Container<input data-f="container" class="m" value="${esc(s.container || '')}" maxlength="64" placeholder="${esc(s.id || 'same as name')}"></label>
     ${s.kind === 'qbittorrent' ? `<label>Username<input data-f="username" value="${esc(s.username || '')}" autocomplete="off"></label>
     <label>Password<input data-f="_password" type="password" autocomplete="new-password" placeholder="${esc(secretPlaceholder(s, 'password'))}"></label>` : ''}
     ${hint ? `<span class="hint">API key: ${esc(hint)}</span>` : ''}
