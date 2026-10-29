@@ -1,0 +1,11 @@
+Store container image updates reported by Diun
+
+New pihub/updates.py with an Updates store: one entry per image from Diun
+webhook bodies with status "update" ("new" is Diun's first sighting and is
+ignored). Same digest keeps the first received time and merges container
+names; a new digest replaces the entry. Saved atomically to a 0600 file; a
+missing or corrupt file starts empty; at most 200 entries, oldest dropped.
+Non-http(s) hub links are dropped so they can't become javascript: links.
+
+Files: pihub/updates.py, tests/test_updates.py,
+tests/fixtures/diun_webhook.json (two real Diun v4.33.1 bodies), .gitignore
