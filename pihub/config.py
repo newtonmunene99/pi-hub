@@ -115,6 +115,11 @@ def _normalise_service(raw: object, categories: Sequence[str]) -> Service:
     for field in ("username", "log", *SECRET_FIELDS):
         if raw.get(field):
             cast(dict[str, Any], svc)[field] = str(raw[field])
+    # The Docker container running the service, when its name differs; used to
+    # match image updates (see updates.py).
+    container = str(raw.get("container", "") or "").strip()[:64]
+    if container:
+        svc["container"] = container
     return svc
 
 

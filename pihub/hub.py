@@ -324,6 +324,7 @@ def service_view(svc: Service, **live: Any) -> dict[str, Any]:
         "port": svc["port"],
         "linkPath": svc["basePath"] + svc["linkPath"],
         "url": svc["url"],
+        "container": svc.get("container", ""),
         "cron": is_scheduled(svc),
         **live,
     }

@@ -77,6 +77,15 @@ class HubPollTests(unittest.TestCase):
         kometa = hub.state()["services"][0]
         self.assertEqual((kometa["state"], kometa["stat"], kometa["cron"]), ("Scheduled", "Log not found", True))
 
+    def test_state_services_carry_container(self):
+        hub = self.hub(
+            [
+                {"name": "Kometa", "kind": "kometa", "log": "/nonexistent/meta.log", "container": "kometa-run"},
+                {"name": "Other", "kind": "kometa", "log": "/nonexistent/other.log"},
+            ]
+        )
+        self.assertEqual([s["container"] for s in hub.state()["services"]], ["kometa-run", ""])
+
 
 class StateViewTests(unittest.TestCase):
     def test_sidebar_sections_follow_provides(self):

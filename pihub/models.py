@@ -34,6 +34,7 @@ class Service(TypedDict, total=False):
     password: str
     username: str
     log: str
+    container: str
 
 
 class Config(TypedDict):

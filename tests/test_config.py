@@ -49,6 +49,20 @@ class NormaliseTests(unittest.TestCase):
         cfg = config.normalise({"services": [{"name": "Kometa", "kind": "kometa", "log": "/logs/meta.log"}]})
         self.assertEqual(cfg["services"][0]["log"], "/logs/meta.log")
 
+    def test_container_is_optional_and_capped(self):
+        cfg = config.normalise(
+            {
+                "services": [
+                    {"name": "A", "port": "1", "container": " media-server "},
+                    {"name": "B", "port": "1", "container": ""},
+                    {"name": "C", "port": "1", "container": "x" * 100},
+                ]
+            }
+        )
+        a, b, c = cfg["services"]
+        self.assertEqual((a["container"], "container" in b, c["container"]), ("media-server", False, "x" * 64))
+        self.assertEqual(config.public_services(cfg)[0]["container"], "media-server")
+
     def test_poll_seconds(self):
         self.assertEqual(config.normalise({"pollSeconds": "30"})["pollSeconds"], 30)
         self.assertEqual(config.normalise({"pollSeconds": 1})["pollSeconds"], 5)
