@@ -34,6 +34,7 @@ A complete example: [`config.example.json`](../config.example.json).
 | `apiKey` | no | API key / token used for the status line. See [Secrets](#secrets). |
 | `username`, `password` | no | qBittorrent Web UI login (not needed if "Bypass authentication for clients on localhost" applies). |
 | `log` | kometa | Path to Kometa's `meta.log`. |
+| `container` | no | Docker container name, if it differs from the service's name or id. Used to match [container updates](#container-updates-diun). |
 
 Links open on the **hostname you used to reach pi-hub** (so `http://pi.local:8000` links to `http://pi.local:7878`), unless `url` is set.
 
@@ -190,6 +191,51 @@ The socket is only accessible to its owner and group, and the image runs as UID 
 | `PIHUB_AGENT_REBOOT` | `sudo -n systemctl reboot` | reboot command; empty turns restart off |
 
 **Security:** the panel is only available after [signing in](#signing-in). With sign-in turned off (`PIHUB_AUTH=off`), anyone who can reach pi-hub can use these buttons, so keep it behind an authenticating proxy. `PIHUB_READONLY=1` turns host actions off. The endpoints only accept JSON, so another website can't trigger them from your browser. Sessions run under *your* Claude account, so only you can work in them, but anyone who can use the panel can start or stop them.
+
+## Container updates (Diun)
+
+pi-hub can show which of your containers have a newer image. It doesn't check registries itself: [Diun](https://crazymax.dev/diun/) does that, and tells pi-hub through a webhook. If Diun already sends you notifications (ntfy, email…), keep them; the webhook is just one more notifier.
+
+When Diun reports an update, pi-hub lists it under **Updates available** in the sidebar, with the image tag and a *Release notes* link. The matching service gets an **Update** badge, and its details popup says so too. After you've updated the container, dismiss the entry with **×**, or use **Clear all**. Entries stay until you dismiss them. A newer report for the same image replaces the old one.
+
+**1. Create a token** of at least 32 characters, and give it to pi-hub:
+
+```sh
+python3 -c "import secrets; print(secrets.token_urlsafe(32))" > config/webhook-token
+chmod 600 config/webhook-token
+```
+
+```yaml
+    environment:
+      - PIHUB_WEBHOOK_TOKEN=file:/config/webhook-token
+```
+
+`PIHUB_WEBHOOK_TOKEN` also accepts the token itself or `env:NAME`. A token shorter than 32 characters stops pi-hub from starting.
+
+**2. Add the webhook to Diun** (its [Docker provider](https://crazymax.dev/diun/providers/docker/) watching your containers), with the same token:
+
+```yaml
+  diun:
+    image: crazymax/diun:latest
+    environment:
+      - DIUN_NOTIF_WEBHOOK_ENDPOINT=http://host.docker.internal:8000/api/hooks/diun
+      - DIUN_NOTIF_WEBHOOK_METHOD=POST
+      - DIUN_NOTIF_WEBHOOK_HEADERS_CONTENT-TYPE=application/json
+      - DIUN_NOTIF_WEBHOOK_HEADERS_AUTHORIZATION=Bearer <your token>
+      - DIUN_NOTIF_WEBHOOK_TIMEOUT=10s
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+```
+
+`extra_hosts` lets a bridge-networked Diun reach pi-hub on the host (pi-hub on host networking, or publishing port 8000). If both containers share a Docker network, use `http://pi-hub:8000/api/hooks/diun` instead. Run `docker exec diun diun notif test` to check: Diun's log should show no webhook error. The test image is marked *new*, which pi-hub ignores, so nothing appears in the sidebar.
+
+**3. Match containers to services.** An update is shown on a service when the container's name equals the service's name or id, ignoring case and punctuation: a container called `sonarr` matches *Sonarr*. If they differ, set the service's `container` field (Settings → ••• → *Container*). Updates for containers no service matches are still listed, under the container's name.
+
+Notes:
+
+- pi-hub keeps reports with Diun status `update`, meaning a new image for the tag a container runs. It ignores `new`, which Diun sends the first time it sees an image. To hear about new version tags for pinned images, see Diun's `diun.watch_repo` and `diun.include_tags` labels.
+- `/api/hooks/diun` is the only API endpoint that doesn't need [signing in](#signing-in). It needs the token instead, and only stores entries. Dismissing needs a signed-in session and is off with `PIHUB_READONLY=1`.
+- Up to 200 updates are kept in `updates.json` next to the config (`PIHUB_UPDATES` sets another path).
 
 ## Environment variables
 

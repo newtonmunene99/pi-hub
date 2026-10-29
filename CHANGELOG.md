@@ -4,6 +4,10 @@ All notable changes are listed here. The format follows [Keep a Changelog](https
 
 ## [Unreleased]
 
+### Added
+
+- Container updates: with Diun's webhook pointed at pi-hub (`PIHUB_WEBHOOK_TOKEN`), images with a newer version are listed under *Updates available* in the sidebar, with release-notes links. Matching services get an *Update* badge. Dismiss entries once you've updated. A new optional service field, `container`, matches containers named differently from the service. See *Container updates (Diun)* in docs/configuration.md.
+
 ## [0.4.0] - 2026-10-26
 
 ### Added

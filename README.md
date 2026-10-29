@@ -10,6 +10,7 @@ Stop remembering port numbers. pi-hub shows every service as a card with a live 
 - **Live status for popular apps:** Plex, Sonarr, Radarr, Prowlarr, Bazarr, qBittorrent, SABnzbd and Kometa — and an up/down check with response times for *any* web app.
 - **Jump to anything:** type a name or port, press <kbd>Enter</kbd>. <kbd>/</kbd> focuses search from anywhere.
 - **Details on demand:** uptime, version, current response time and a 24-hour response-time chart for each service.
+- **Container updates:** with [Diun](https://crazymax.dev/diun/) watching your containers, pi-hub lists images that have a newer version, badges the matching services and links to the release notes ([setup](docs/configuration.md#container-updates-diun)).
 - **Phone-friendly:** a launcher-first layout on small screens.
 - **Edit in the browser** or in a plain `config.json`. API keys are write-only in the UI and can come from environment variables or Docker secrets.
 
@@ -114,6 +115,8 @@ Want another app? See [adding an integration](CONTRIBUTING.md#adding-an-integrat
 | `PIHUB_AUTH_FILE` | `auth.json` next to the config | where a browser-created account is stored |
 | `PIHUB_READONLY` | — | `1` disables editing in the UI |
 | `PIHUB_AGENT_SOCKET` | — | host agent socket: enables the restart and Claude Code buttons ([setup](docs/configuration.md#host-actions-restart-and-claude-code-optional)) |
+| `PIHUB_WEBHOOK_TOKEN` | — | turns on the Diun webhook for [container updates](docs/configuration.md#container-updates-diun); at least 32 characters; accepts `env:NAME` and `file:/path` |
+| `PIHUB_UPDATES` | `updates.json` next to the config | where reported container updates are stored |
 | `PIHUB_DEMO` | — | `1` serves fake data |
 | `PIHUB_LOG_LEVEL` | `INFO` | `DEBUG`, `INFO`, `WARNING` or `ERROR` |
 | `TZ` | `UTC` | timezone for the schedule |

@@ -17,6 +17,7 @@ services:
       # - PIHUB_PASSWORD=change-me
       # - PIHUB_READONLY=1         # or disable editing entirely
       # - PIHUB_AGENT_SOCKET=/run/pihub-agent/agent.sock   # restart + Claude Code buttons (docs/configuration.md)
+      # - PIHUB_WEBHOOK_TOKEN=file:/config/webhook-token  # container updates from Diun (docs/configuration.md)
       # API keys referenced from config.json as "env:NAME":
       - PLEX_TOKEN=${PLEX_TOKEN:-}
       - SONARR_API_KEY=${SONARR_API_KEY:-}
@@ -24,7 +25,7 @@ services:
       - PROWLARR_API_KEY=${PROWLARR_API_KEY:-}
       - QBITTORRENT_PASSWORD=${QBITTORRENT_PASSWORD:-}
     volumes:
-      - ./config:/config                       # config.json, history.json, auth.json
+      - ./config:/config                       # config.json, history.json, auth.json, updates.json
       - /mnt/media:/disks/media:ro             # one line per disk in "system.disks"
       - /path/to/kometa/config/logs:/kometa-logs:ro   # only if you use the kometa kind
       # - /etc/argononed.conf:/argononed.conf:ro      # Argon ONE fan curve

@@ -40,6 +40,7 @@ pihub/
   __main__.py      entry point, environment variables
   server.py        HTTP server, JSON API, security headers
   hub.py           polling loop, 24h history, /api/state
+  updates.py       container image updates reported by Diun
   config.py        config.json loading, validation, secret handling
   auth.py          sign-in: password hashing, sessions, first-run setup
   integrations.py  one class per supported app (kind)
