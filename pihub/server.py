@@ -12,6 +12,7 @@
 
 With PIHUB_WEBHOOK_TOKEN set (see updates.py):
   POST /api/hooks/diun  Diun webhook; needs "Authorization: Bearer <token>", not a session
+  POST /api/updates/dismiss  forget one update ({"image"}) or all of them ({"all": true})
 
 With a host agent (PIHUB_AGENT_SOCKET, see hostagent.py):
   GET  /api/host          agent status and running Claude sessions
@@ -23,7 +24,7 @@ With a host agent (PIHUB_AGENT_SOCKET, see hostagent.py):
 With sign-in on (see auth.py), every other /api/ endpoint needs the HttpOnly
 session cookie set by /api/login; the static UI stays public so the sign-in
 screen can load (the Diun hook has its own token). PIHUB_READONLY=1 disables
-saving settings and host actions.
+saving settings, dismissing updates and host actions.
 """
 
 import hmac
@@ -203,7 +204,8 @@ def make_handler(
                 return self.diun_hook()
             host_action = HOST_ACTIONS.get(path)
             account_action = path in ("/api/login", "/api/logout", "/api/setup", "/api/password")
-            if path != "/api/config" and not account_action and not (host_action and agent):
+            dismiss = path == "/api/updates/dismiss" and updates is not None
+            if path != "/api/config" and not account_action and not dismiss and not (host_action and agent):
                 return self.send(404, {"error": "Not found"})
             if readonly and not account_action:
                 return self.send(403, {"error": "Settings are read-only (PIHUB_READONLY is set)"})
@@ -218,6 +220,8 @@ def make_handler(
                         raise ValueError("Expected a JSON object")
                     params = {k: str(body.get(k, "")) for k in host_action[1]}
                     return self.host_call(host_action[0], **params)
+                if dismiss and updates:
+                    return self.dismiss_updates(updates, body)
                 notices = hub.update_services(body)
                 return self.send(200, {**hub.settings(), "readonly": readonly, "notices": notices})
             except RequestError as e:
@@ -244,6 +248,16 @@ def make_handler(
                 return json.loads(self.rfile.read(length) or b"{}")
             except RecursionError:
                 raise ValueError("JSON nested too deeply") from None
+
+        def dismiss_updates(self, store: Updates, body: object) -> None:
+            """Forgets updates the admin has dealt with; answers with the new list."""
+            if isinstance(body, dict) and body.get("all") is True:
+                store.dismiss(all=True)
+            elif isinstance(body, dict) and isinstance(body.get("image"), str):
+                store.dismiss(body["image"])
+            else:
+                raise ValueError('Expected {"image": "<image>"} or {"all": true}')
+            return self.send(200, {"updates": store.view(hub.state()["services"])})
 
         def diun_hook(self) -> None:
             """Stores an image update Diun reports. Allowed in read-only mode: it edits nothing."""

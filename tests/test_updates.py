@@ -123,6 +123,18 @@ class StoreTests(unittest.TestCase):
                 u.record(payload(0, status="update", image=f"app{n}"))
         self.assertEqual([e["image"] for e in u.entries()], ["app3", "app2", "app1"])
 
+    def test_dismiss_one_and_all_persist(self):
+        u = self.store()
+        u.record(payload(0, status="update"))
+        u.record(payload(1, status="update"))
+        u.dismiss("nope:latest")
+        self.assertEqual(len(u.entries()), 2)
+        u.dismiss("ghcr.io/flaresolverr/flaresolverr:latest")
+        self.assertEqual([e["image"] for e in self.store().entries()], ["ghcr.io/dictionarry-hub/profilarr:latest"])
+        u.record(payload(0, status="update"))
+        u.dismiss(all=True)
+        self.assertEqual(self.store().entries(), [])
+
 
 class ViewTests(unittest.TestCase):
     def test_normalise_name(self):

@@ -441,5 +441,54 @@ class HookTests(ServerCase):
         self.assertNotIn(TOKEN.encode(), data)
 
 
+class DismissTests(ServerCase):
+    def start_with_two(self, **kwargs):
+        self.updates = Updates()
+        self.updates.record(payload(0, status="update"))
+        self.updates.record(payload(1, status="update", metadata={"ctn_names": "radarr"}))
+        self.start(updates=self.updates, **kwargs)
+
+    def dismiss(self, body, headers=None):
+        status, data, _ = self.call("POST", "/api/updates/dismiss", body, {**JSON, **(headers or {})})
+        return status, json.loads(data)
+
+    def test_dismiss_one_returns_the_new_list(self):
+        self.start_with_two()
+        status, data = self.dismiss({"image": "ghcr.io/flaresolverr/flaresolverr:latest"})
+        self.assertEqual((status, [u["services"] for u in data["updates"]]), (200, [["radarr"]]))
+
+    def test_dismiss_all(self):
+        self.start_with_two()
+        self.assertEqual(self.dismiss({"all": True}), (200, {"updates": []}))
+        self.assertEqual(self.updates.entries(), [])
+
+    def test_unknown_image_is_a_no_op(self):
+        self.start_with_two()
+        status, data = self.dismiss({"image": "nope:latest"})
+        self.assertEqual((status, len(data["updates"])), (200, 2))
+
+    def test_other_bodies_are_400(self):
+        self.start_with_two()
+        for body in ({}, {"image": 3}, {"all": "yes"}, []):
+            with self.subTest(body=body):
+                self.assertEqual(self.dismiss(body)[0], 400)
+        self.assertEqual(len(self.updates.entries()), 2)
+
+    def test_needs_a_session(self):
+        self.start_with_two(auth=env_auth())
+        self.assertEqual(self.dismiss({"all": True})[0], 401)
+        _, cookie = self.login()
+        self.assertEqual(self.dismiss({"all": True}, cookie)[0], 200)
+
+    def test_readonly_is_403(self):
+        self.start_with_two(readonly=True)
+        self.assertEqual(self.dismiss({"all": True})[0], 403)
+        self.assertEqual(len(self.updates.entries()), 2)
+
+    def test_without_a_store_is_404(self):
+        self.start()
+        self.assertEqual(self.dismiss({"all": True})[0], 404)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -138,6 +138,15 @@ class Updates:
             items = [{**e, "containers": list(e["containers"])} for e in self.data.values()]
         return sorted(items, key=lambda e: e["received"], reverse=True)
 
+    def dismiss(self, image: str | None = None, *, all: bool = False) -> None:
+        """Forgets one image's update, or every update with ``all``; an unknown image is ignored."""
+        with self.lock:
+            if all:
+                self.data.clear()
+            elif self.data.pop(image or "", None) is None:
+                return
+            self._save()
+
     def view(self, services: Sequence[Mapping[str, Any]]) -> list[dict[str, Any]]:
         """The ``updates`` list for /api/state, matched to the dashboard's services.
 
