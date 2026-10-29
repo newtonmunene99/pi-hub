@@ -1,0 +1,22 @@
+Verification report: image updates backend
+
+Also: checks that a missing token file fails with the token-length message,
+so another exit-2 cause can't pass the test.
+
+Tests: python3 -W error::ResourceWarning -m unittest discover -s tests -t .
+-> 186 OK; ruff check, ruff format --check and mypy clean.
+Coverage: pihub/updates.py 100%, pihub/server.py 99%.
+
+Agent-run checks (pi-hub from source, file: token, sign-in off):
+- both captured Diun payloads POSTed as "update" -> {"stored": true}
+- wrong token -> 401
+- /api/state lists both, matched by service name and by the container field
+- after a restart both entries are still listed; updates.json is mode 600
+- the token appears in neither the log nor updates.json
+- a token under 32 characters exits with code 2
+
+Independent phase verifier: rejected round 1 (malformed updates.json could
+break /api/state; container save path, startup wiring untested; docstring),
+all fixed; approved round 2.
+
+Hand check: none needed, the phase has no UI.
