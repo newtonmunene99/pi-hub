@@ -1,0 +1,11 @@
+List image updates in the sidebar
+
+An "Updates available - N" section leads the sidebar whenever Diun has
+reported updates: each row shows the service (or container) name, the image
+tag, a Release notes link opening in a new tab (noopener noreferrer, http(s)
+only) and a dismiss button; "Clear all" appears with two or more. Dismiss
+controls are hidden in read-only mode, and a failed dismiss shows inline.
+On phones, where the sidebar was hidden, the updates section alone is shown
+below the services, with 44px touch targets.
+
+Files: pihub/static/app.js, pihub/static/app.css
