@@ -1,0 +1,11 @@
+Document container updates with Diun
+
+A "Container updates (Diun)" section in docs/configuration.md covers making
+the token, the Diun webhook settings (with extra_hosts so a bridge-networked
+Diun reaches pi-hub on the host), testing with diun notif test, matching
+containers to services with the new container field, and dismissing. The
+README lists the feature and the PIHUB_WEBHOOK_TOKEN and PIHUB_UPDATES
+variables; the compose example, CONTRIBUTING layout and CHANGELOG follow.
+
+Files: README.md, docs/configuration.md, compose.example.yml,
+CONTRIBUTING.md, CHANGELOG.md
