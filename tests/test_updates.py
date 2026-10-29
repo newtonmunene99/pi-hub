@@ -183,5 +183,16 @@ class ViewTests(unittest.TestCase):
         self.assertEqual([v["label"] for v in u.view([])], ["profilarr", "flaresolverr"])
 
 
+class TokenTests(unittest.TestCase):
+    def test_token_from_env(self):
+        self.assertEqual(updates.token_from_env({}), "")
+        self.assertEqual(updates.token_from_env({"PIHUB_WEBHOOK_TOKEN": "a" * 32}), "a" * 32)
+        with mock.patch.dict(os.environ, {"HOOK_SECRET": "b" * 40}):
+            self.assertEqual(updates.token_from_env({"PIHUB_WEBHOOK_TOKEN": "env:HOOK_SECRET"}), "b" * 40)
+        for bad in ("short", "a" * 31, "env:PIHUB_TEST_UNSET_VAR", "file:/nonexistent/token"):
+            with self.subTest(bad=bad), self.assertRaisesRegex(UpdatesError, "at least 32 characters"):
+                updates.token_from_env({"PIHUB_WEBHOOK_TOKEN": bad})
+
+
 if __name__ == "__main__":
     unittest.main()

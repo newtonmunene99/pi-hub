@@ -11,6 +11,8 @@ Environment variables:
   PIHUB_AUTH_FILE where a browser-created account is stored (default auth.json next to the config)
   PIHUB_READONLY  "1" to disable editing settings in the UI
   PIHUB_AGENT_SOCKET host agent socket: enables the restart and Claude buttons (see hostagent.py)
+  PIHUB_WEBHOOK_TOKEN enables the Diun webhook; 32+ characters, accepts env:NAME and file:/path
+  PIHUB_UPDATES   path for image updates from Diun (default updates.json next to the config)
   PIHUB_DEMO      "1" to serve fake data (no config needed) - for UI work and screenshots
   PIHUB_LOG_LEVEL DEBUG, INFO, WARNING or ERROR  (default INFO)
 """
@@ -26,6 +28,7 @@ from .auth import AuthError, auth_from_env
 from .config import ConfigError
 from .hostagent import AgentClient
 from .server import HubAPI, serve
+from .updates import Updates, UpdatesError, token_from_env
 
 
 def main() -> None:
@@ -43,11 +46,13 @@ def main() -> None:
     config_path = os.environ.get("PIHUB_CONFIG", "/config/config.json")
     try:
         auth = auth_from_env(os.environ, config_path, demo=demo)
-    except AuthError as e:
+        webhook_token = token_from_env(os.environ)
+    except (AuthError, UpdatesError) as e:
         logger.error("%s", e)
         sys.exit(2)
 
     hub: HubAPI
+    updates: Updates | None = None
     if demo:
         from .demo import DemoHub
 
@@ -63,10 +68,11 @@ def main() -> None:
             sys.exit(2)
         threading.Thread(target=real_hub.run_forever, daemon=True).start()
         hub = real_hub
+        updates = Updates(os.environ.get("PIHUB_UPDATES") or os.path.join(os.path.dirname(config_path), "updates.json"))
 
     socket_path = os.environ.get("PIHUB_AGENT_SOCKET", "")
     agent = AgentClient(socket_path) if socket_path else None
-    httpd = serve(hub, host, port, auth, readonly, agent)
+    httpd = serve(hub, host, port, auth, readonly, agent, updates=updates, webhook_token=webhook_token)
     mode = " (demo)" if os.environ.get("PIHUB_DEMO") else ""
     logger.info("pi-hub %s%s listening on http://%s:%s", __version__, mode, host, port)
     with contextlib.suppress(KeyboardInterrupt):

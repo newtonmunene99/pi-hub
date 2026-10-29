@@ -10,6 +10,9 @@
   GET  /api/config   services for the settings page (secrets masked)
   POST /api/config   save services edited in the settings page
 
+With PIHUB_WEBHOOK_TOKEN set (see updates.py):
+  POST /api/hooks/diun  Diun webhook; needs "Authorization: Bearer <token>", not a session
+
 With a host agent (PIHUB_AGENT_SOCKET, see hostagent.py):
   GET  /api/host          agent status and running Claude sessions
   GET  /api/host/dirs     folders to start a session in (?path=)
@@ -19,9 +22,11 @@ With a host agent (PIHUB_AGENT_SOCKET, see hostagent.py):
 
 With sign-in on (see auth.py), every other /api/ endpoint needs the HttpOnly
 session cookie set by /api/login; the static UI stays public so the sign-in
-screen can load. PIHUB_READONLY=1 disables saving settings and host actions.
+screen can load (the Diun hook has its own token). PIHUB_READONLY=1 disables
+saving settings and host actions.
 """
 
+import hmac
 import json
 import os
 import urllib.parse
@@ -31,6 +36,7 @@ from typing import Any, Protocol
 from .auth import COOKIE_NAME, SESSION_SECONDS, Auth, AuthError, Throttled
 from .config import ConfigError
 from .hostagent import AgentClient, AgentError
+from .updates import Updates, UpdatesError
 
 STATIC_DIR = os.path.join(os.path.dirname(__file__), "static")
 MAX_BODY = 200_000
@@ -49,8 +55,9 @@ HOST_ACTIONS = {
     "/api/host/stop": ("stop", ("id",)),
     "/api/host/reboot": ("reboot", ()),
 }
-# Reachable without a session: the probe, and what it takes to sign in.
-PUBLIC_API = frozenset({"/api/health", "/api/auth", "/api/login", "/api/logout", "/api/setup"})
+# Reachable without a session: the probe, what it takes to sign in, and the
+# Diun hook, which checks its own token.
+PUBLIC_API = frozenset({"/api/health", "/api/auth", "/api/login", "/api/logout", "/api/setup", "/api/hooks/diun"})
 SECURITY_HEADERS = {
     "X-Content-Type-Options": "nosniff",
     "Referrer-Policy": "no-referrer",
@@ -60,6 +67,14 @@ SECURITY_HEADERS = {
         "font-src 'self'; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'"
     ),
 }
+
+
+class RequestError(Exception):
+    """A request the handler refuses; ``status`` is the HTTP code to answer with."""
+
+    def __init__(self, status: int, message: str) -> None:
+        super().__init__(message)
+        self.status = status
 
 
 class HubAPI(Protocol):
@@ -73,11 +88,18 @@ class HubAPI(Protocol):
 
 
 def make_handler(
-    hub: HubAPI, auth: Auth | None = None, readonly: bool = False, agent: AgentClient | None = None
+    hub: HubAPI,
+    auth: Auth | None = None,
+    readonly: bool = False,
+    agent: AgentClient | None = None,
+    *,
+    updates: Updates | None = None,
+    webhook_token: str = "",
 ) -> type[BaseHTTPRequestHandler]:
     """Builds the request handler class bound to one hub and its access settings.
 
-    ``auth`` of None means sign-in is off.
+    ``auth`` of None means sign-in is off. The Diun hook is on only with both
+    ``updates`` and a ``webhook_token``.
     """
     access = auth or Auth("off")
 
@@ -159,7 +181,9 @@ def make_handler(
             if path == "/api/auth":
                 return self.send(200, access.status(self.session_token()))
             if path == "/api/state":
-                return self.send(200, {**hub.state(), "readonly": readonly, "hostAgent": bool(agent)})
+                state = hub.state()
+                listed = updates.view(state["services"]) if updates else []
+                return self.send(200, {**state, "updates": listed, "readonly": readonly, "hostAgent": bool(agent)})
             if path == "/api/config":
                 return self.send(200, {**hub.settings(), "readonly": readonly})
             if path in ("/api/host", "/api/host/dirs"):
@@ -175,25 +199,16 @@ def make_handler(
             path = urllib.parse.urlparse(self.path).path
             if self.needs_sign_in(path):
                 return None
+            if path == "/api/hooks/diun":
+                return self.diun_hook()
             host_action = HOST_ACTIONS.get(path)
             account_action = path in ("/api/login", "/api/logout", "/api/setup", "/api/password")
             if path != "/api/config" and not account_action and not (host_action and agent):
                 return self.send(404, {"error": "Not found"})
             if readonly and not account_action:
                 return self.send(403, {"error": "Settings are read-only (PIHUB_READONLY is set)"})
-            # JSON only: stops plain cross-site form posts.
-            if self.headers.get("Content-Type", "").split(";")[0].strip() != "application/json":
-                return self.send(415, {"error": "Content-Type must be application/json"})
             try:
-                length = int(self.headers.get("Content-Length", 0))
-                if length < 0:
-                    raise ValueError("Invalid Content-Length")
-                if length > MAX_BODY:
-                    return self.send(413, {"error": "Request too large"})
-                try:
-                    body = json.loads(self.rfile.read(length) or b"{}")
-                except RecursionError:
-                    raise ValueError("JSON nested too deeply") from None
+                body = self.json_body()
                 if account_action:
                     if not isinstance(body, dict):
                         raise ValueError("Expected a JSON object")
@@ -205,7 +220,43 @@ def make_handler(
                     return self.host_call(host_action[0], **params)
                 notices = hub.update_services(body)
                 return self.send(200, {**hub.settings(), "readonly": readonly, "notices": notices})
+            except RequestError as e:
+                return self.send(e.status, {"error": str(e)})
             except (ConfigError, ValueError) as e:
+                return self.send(400, {"error": str(e)})
+
+        def json_body(self) -> Any:
+            """Reads and parses the JSON request body.
+
+            Raises:
+                RequestError: Not JSON (415; this also stops plain cross-site
+                    form posts) or too large (413).
+                ValueError: A bad Content-Length or malformed JSON.
+            """
+            if self.headers.get("Content-Type", "").split(";")[0].strip() != "application/json":
+                raise RequestError(415, "Content-Type must be application/json")
+            length = int(self.headers.get("Content-Length", 0))
+            if length < 0:
+                raise ValueError("Invalid Content-Length")
+            if length > MAX_BODY:
+                raise RequestError(413, "Request too large")
+            try:
+                return json.loads(self.rfile.read(length) or b"{}")
+            except RecursionError:
+                raise ValueError("JSON nested too deeply") from None
+
+        def diun_hook(self) -> None:
+            """Stores an image update Diun reports. Allowed in read-only mode: it edits nothing."""
+            if updates is None or not webhook_token:
+                return self.send(404, {"error": "Not found"})
+            given = self.headers.get("Authorization", "").encode()
+            if not hmac.compare_digest(given, f"Bearer {webhook_token}".encode()):
+                return self.send(401, {"error": "Invalid token"})
+            try:
+                return self.send(200, {"stored": updates.record(self.json_body())})
+            except RequestError as e:
+                return self.send(e.status, {"error": str(e)})
+            except (UpdatesError, ValueError) as e:
                 return self.send(400, {"error": str(e)})
 
         def account(self, path: str, body: dict[str, Any]) -> None:
@@ -263,8 +314,12 @@ def serve(
     auth: Auth | None = None,
     readonly: bool = False,
     agent: AgentClient | None = None,
+    *,
+    updates: Updates | None = None,
+    webhook_token: str = "",
 ) -> ThreadingHTTPServer:
     """Creates (but does not start) the HTTP server; call ``serve_forever`` on it."""
-    httpd = ThreadingHTTPServer((host, port), make_handler(hub, auth, readonly, agent))
+    handler = make_handler(hub, auth, readonly, agent, updates=updates, webhook_token=webhook_token)
+    httpd = ThreadingHTTPServer((host, port), handler)
     httpd.daemon_threads = True
     return httpd

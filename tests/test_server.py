@@ -10,10 +10,12 @@ from pihub.auth import Auth, hash_password
 from pihub.hostagent import AgentError
 from pihub.hub import Hub
 from pihub.server import serve
+from pihub.updates import Updates
+from tests.test_updates import payload
 
 
 class ServerCase(unittest.TestCase):
-    def start(self, auth=None, readonly=False, agent=None):
+    def start(self, auth=None, readonly=False, agent=None, **hooks):
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
         path = os.path.join(tmp.name, "config.json")
@@ -22,7 +24,7 @@ class ServerCase(unittest.TestCase):
             config.normalise({"services": [{"name": "Radarr", "kind": "radarr", "port": "1", "apiKey": "topsecret"}]}),
         )
         self.path = path
-        httpd = serve(Hub(path), "127.0.0.1", 0, auth, readonly, agent)
+        httpd = serve(Hub(path), "127.0.0.1", 0, auth, readonly, agent, **hooks)
         threading.Thread(target=httpd.serve_forever, daemon=True).start()
         self.addCleanup(httpd.server_close)
         self.addCleanup(httpd.shutdown)
@@ -69,6 +71,7 @@ class ServerTests(ServerCase):
         self.assertEqual(status, 200)
         state = json.loads(data)
         self.assertEqual(state["services"][0]["name"], "Radarr")
+        self.assertEqual(state["updates"], [])
         self.assertNotIn(b"topsecret", data)
         self.assertIn("default-src 'self'", resp.getheader("Content-Security-Policy"))
         status, data, _ = self.call("GET", "/")
@@ -383,6 +386,59 @@ class PasswordEndpointTests(ServerCase):
         body = {"current": "s3cretpass", "new": "n3wpassword"}
         status, data, _ = self.call("POST", "/api/password", body, {**headers, **JSON})
         self.assertEqual((status, json.loads(data)["error"]), (409, "The password is set by PIHUB_PASSWORD"))
+
+
+TOKEN = "t" * 32
+HOOK = {"Content-Type": "application/json", "Authorization": f"Bearer {TOKEN}"}
+
+
+class HookTests(ServerCase):
+    def start_hook(self, **kwargs):
+        self.updates = Updates()
+        self.start(updates=self.updates, webhook_token=TOKEN, **kwargs)
+
+    def test_no_token_is_404(self):
+        self.start(updates=Updates())
+        self.assertEqual(self.call("POST", "/api/hooks/diun", payload(), HOOK)[0], 404)
+
+    def test_no_store_is_404(self):
+        self.start(webhook_token=TOKEN)
+        self.assertEqual(self.call("POST", "/api/hooks/diun", payload(), HOOK)[0], 404)
+
+    def test_wrong_or_missing_token_is_401(self):
+        self.start_hook()
+        for headers in (JSON, {**JSON, "Authorization": "Bearer " + "x" * 32}, {**JSON, "Authorization": TOKEN}):
+            with self.subTest(headers=headers):
+                status, data, _ = self.call("POST", "/api/hooks/diun", payload(), headers)
+                self.assertEqual((status, json.loads(data)), (401, {"error": "Invalid token"}))
+        self.assertEqual(self.updates.entries(), [])
+
+    def test_non_json_is_415(self):
+        self.start_hook()
+        status, _ = self.raw_post(
+            "/api/hooks/diun", b"{}", {**HOOK, "Content-Type": "text/plain", "Content-Length": "2"}
+        )
+        self.assertEqual(status, 415)
+
+    def test_malformed_payload_is_400(self):
+        self.start_hook()
+        for body in ([], {"status": "update"}):
+            with self.subTest(body=body):
+                self.assertEqual(self.call("POST", "/api/hooks/diun", body, HOOK)[0], 400)
+
+    def test_new_is_ignored_update_is_listed_with_its_service(self):
+        self.start_hook(auth=env_auth(), readonly=True)
+        status, data, _ = self.call("POST", "/api/hooks/diun", payload(), HOOK)
+        self.assertEqual((status, json.loads(data)), (200, {"stored": False}))
+        body = payload(status="update", metadata={"ctn_names": "radarr"})
+        status, data, _ = self.call("POST", "/api/hooks/diun", body, HOOK)
+        self.assertEqual((status, json.loads(data)), (200, {"stored": True}))
+        self.assertEqual(self.call("GET", "/api/state")[0], 401)
+        _, cookie = self.login()
+        _, data, _ = self.call("GET", "/api/state", headers=cookie)
+        [update] = json.loads(data)["updates"]
+        self.assertEqual((update["services"], update["label"]), (["radarr"], "Radarr"))
+        self.assertNotIn(TOKEN.encode(), data)
 
 
 if __name__ == "__main__":

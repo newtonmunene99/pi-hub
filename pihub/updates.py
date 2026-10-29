@@ -16,11 +16,33 @@ import time
 from collections.abc import Callable, Mapping, Sequence
 from typing import Any
 
+from .config import resolve_secret
+
 MAX_ENTRIES = 200
+MIN_TOKEN_LENGTH = 32
 
 
 class UpdatesError(ValueError):
     """Bad webhook payload or token setting; the message is safe to show."""
+
+
+def token_from_env(environ: Mapping[str, str]) -> str:
+    """The webhook token from ``PIHUB_WEBHOOK_TOKEN`` (``env:``/``file:`` references allowed).
+
+    Returns:
+        The token, or ``""`` when the variable is unset (the webhook is off).
+
+    Raises:
+        UpdatesError: It is set but resolves to fewer than 32 characters. A
+            long random token is what keeps the unthrottled hook unguessable.
+    """
+    raw = environ.get("PIHUB_WEBHOOK_TOKEN", "")
+    if not raw:
+        return ""
+    token = resolve_secret(raw)
+    if len(token) < MIN_TOKEN_LENGTH:
+        raise UpdatesError(f"PIHUB_WEBHOOK_TOKEN must be at least {MIN_TOKEN_LENGTH} characters")
+    return token
 
 
 def normalise_name(text: str) -> str:
