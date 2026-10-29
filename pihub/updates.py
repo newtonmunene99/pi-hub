@@ -45,6 +45,18 @@ def token_from_env(environ: Mapping[str, str]) -> str:
     return token
 
 
+def _valid_entry(entry: object) -> bool:
+    """True if a loaded entry has the shape ``record`` writes, so reading it cannot fail later."""
+    return (
+        isinstance(entry, dict)
+        and all(isinstance(entry.get(k), str) for k in ("image", "digest", "hubLink", "created"))
+        and isinstance(entry.get("containers"), list)
+        and all(isinstance(c, str) for c in entry["containers"])
+        and isinstance(entry.get("received"), int | float)
+        and not isinstance(entry["received"], bool)
+    )
+
+
 def normalise_name(text: str) -> str:
     """Lowercase alphanumerics only, so "Media_Server" and "media-server" compare equal."""
     return re.sub(r"[^a-z0-9]", "", text.lower())
@@ -72,7 +84,7 @@ class Updates:
     """
 
     def __init__(self, path: str | None = None, clock: Callable[[], float] = time.time) -> None:
-        """Loads entries from ``path``; a missing or corrupt file starts empty.
+        """Loads entries from ``path``; a missing or corrupt file, or any malformed entry, starts empty.
 
         Args:
             path: Where entries are saved. None keeps them in memory only.
@@ -86,7 +98,7 @@ class Updates:
             try:
                 with open(path) as f:
                     loaded = json.load(f)
-                if isinstance(loaded, dict) and all(isinstance(e, dict) and "received" in e for e in loaded.values()):
+                if isinstance(loaded, dict) and all(_valid_entry(e) for e in loaded.values()):
                     self.data = loaded
             except (OSError, ValueError):
                 self.data = {}

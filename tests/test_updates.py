@@ -97,9 +97,27 @@ class StoreTests(unittest.TestCase):
         with open(self.path, "w") as f:
             f.write("{oops")
         self.assertEqual(self.store().entries(), [])
+
+    def test_malformed_entries_start_empty(self):
+        good = {"image": "a", "digest": "d", "hubLink": "", "created": "", "containers": ["a"], "received": 1}
+        for bad in (
+            {"x": 1},
+            {"x": {"received": 1}},
+            {"x": {**good, "received": "a"}, "y": {**good, "image": "y"}},
+            {"x": {**good, "containers": "a"}},
+            {"x": {**good, "containers": [1]}},
+            {"x": {**good, "digest": None}},
+            [good],
+        ):
+            with self.subTest(bad=bad):
+                with open(self.path, "w") as f:
+                    json.dump(bad, f)
+                u = self.store()
+                self.assertEqual(u.entries(), [])
+                self.assertEqual(u.view([{"id": "a", "name": "a", "container": ""}]), [])
         with open(self.path, "w") as f:
-            f.write('{"x": 1, "y": {"image": 2}}')
-        self.assertEqual(self.store().entries(), [])
+            json.dump({"a": good}, f)
+        self.assertEqual(self.store().entries(), [good])
 
     def test_missing_file_starts_empty_and_memory_store_never_saves(self):
         self.assertEqual(self.store().entries(), [])
