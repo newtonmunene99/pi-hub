@@ -234,7 +234,7 @@ class DemoTests(unittest.TestCase):
 
         u = demo_updates()
         view = u.view(DemoHub().state()["services"])
-        self.assertEqual(sorted(v["services"] for v in view), [[], ["sonarr"]])
+        self.assertEqual([(v["label"], v["services"]) for v in view], [("Sonarr", ["sonarr"]), ("flaresolverr", [])])
         self.assertTrue(all(v["hubLink"].startswith("https://") for v in view))
         u.dismiss(all=True)
         self.assertEqual(u.entries(), [])

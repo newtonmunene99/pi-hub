@@ -234,7 +234,7 @@ chmod 600 config/webhook-token
 Notes:
 
 - pi-hub keeps reports with Diun status `update`, meaning a new image for the tag a container runs. It ignores `new`, which Diun sends the first time it sees an image. To hear about new version tags for pinned images, see Diun's `diun.watch_repo` and `diun.include_tags` labels.
-- `/api/hooks/diun` is the only API endpoint that doesn't need [signing in](#signing-in). It needs the token instead, and only stores entries. Dismissing needs a signed-in session and is off with `PIHUB_READONLY=1`.
+- `/api/hooks/diun` is the only endpoint that changes data without [signing in](#signing-in). It needs the token instead, and can only add update entries. Dismissing needs a signed-in session and is off with `PIHUB_READONLY=1`.
 - Up to 200 updates are kept in `updates.json` next to the config (`PIHUB_UPDATES` sets another path).
 
 ## Environment variables
