@@ -1,0 +1,7 @@
+Test that settings saves keep a service's container
+
+A save that omits the container field keeps the stored value; sending a new
+value changes it and sending an empty one removes it. Checked that the test
+fails if the stored service is no longer merged into the save.
+
+Files: tests/test_config.py
