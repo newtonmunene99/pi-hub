@@ -1,0 +1,24 @@
+Verification report: image updates UI, demo and docs
+
+Also: docs say the Diun hook is the only endpoint that changes data without
+a session; the demo test checks the newest-first order.
+
+Tests: 187 unittest OK; ruff check, ruff format --check, mypy clean;
+node --check pihub/static/app.js OK.
+
+Agent-run browser checks (Playwright, headless Chromium, desktop 1400x900 and
+phone 390x844) against pi-hub from source with a file: token and three
+updates POSTed (two real Diun payloads, one with markup in the container name
+and a javascript: hub link):
+- sidebar lists 3 with labels and tags; markup shown as text; only the two
+  https links render, with rel="noopener noreferrer" and target=_blank
+- Update badge on the matched card and pinned tile; details popup line
+- setting a service's Container in Settings badges it and relabels the entry
+- x removes one, Clear all removes the section and all badges, and the
+  dismissals persist across a reload
+- read-only: list shown without x or Clear all
+- phone: only the updates section shows, 44px touch targets; no JS errors
+
+Independent verifier (whole track diff, every acceptance criterion): approved.
+
+Hand check: deferred by the user to the live install after deploy.
