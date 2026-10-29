@@ -1,0 +1,8 @@
+Start with no updates when updates.json holds malformed entries
+
+The loader now checks every entry has the shape record() writes (string
+image, digest, hubLink, created; a list of string containers; a numeric
+received). Before, a file that parsed but had a wrong-shaped entry loaded and
+then raised KeyError/TypeError on every /api/state, taking the dashboard down.
+
+Files: pihub/updates.py, tests/test_updates.py
