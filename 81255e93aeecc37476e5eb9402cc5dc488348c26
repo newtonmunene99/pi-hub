@@ -1,0 +1,11 @@
+Match image updates to services
+
+Updates.view(services) builds the dashboard's list of image updates, newest
+first. An entry matches a service when one of its container names equals the
+service's container field, or its id or name when that field is empty,
+compared lowercase with punctuation removed. Each item gains the image tag
+(a colon before the last "/" is a registry port, so no tag means "latest"),
+the matched service ids, and a label: the first matched service's name, else
+the container name, else the image without its tag.
+
+Files: pihub/updates.py, tests/test_updates.py
