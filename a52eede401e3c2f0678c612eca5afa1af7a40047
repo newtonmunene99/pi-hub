@@ -1,0 +1,11 @@
+Test startup checks for the webhook token and the updates path
+
+`python -m pihub` with a webhook token under 32 characters, or a file:
+reference to a missing file, exits with code 2 and does not log the token;
+new tests run it as a subprocess. Where updates are saved moved into
+updates_path() (PIHUB_UPDATES, else updates.json next to the config) so it
+is tested. The server docstring now says dismissing works whenever updates
+are kept, while only the webhook needs PIHUB_WEBHOOK_TOKEN.
+
+Files: pihub/updates.py, pihub/__main__.py, pihub/server.py,
+tests/test_updates.py, tests/test_main.py
