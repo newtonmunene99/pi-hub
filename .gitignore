@@ -1,6 +1,7 @@
 # Local configuration and runtime data - may contain API keys. Never commit.
 config.json
 history.json
+updates.json
 auth.json
 /config/
 *.json.tmp

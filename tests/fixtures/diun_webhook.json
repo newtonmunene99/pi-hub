@@ -1,0 +1,44 @@
+[
+  {
+    "diun_version": "v4.33.1",
+    "hostname": "688f1b9de17f",
+    "status": "new",
+    "provider": "docker",
+    "image": "ghcr.io/flaresolverr/flaresolverr:latest",
+    "hub_link": "https://github.com/FlareSolverr/FlareSolverr",
+    "mime_type": "application/vnd.oci.image.index.v1+json",
+    "digest": "sha256:c80ae007ce2ccdcd217a12426e4f039ef763ff90738c808d38810c3e59323767",
+    "created": "2026-09-12T01:28:48.871521329Z",
+    "platform": "linux/arm64",
+    "metadata": {
+      "ctn_command": "/usr/bin/dumb-init -- /usr/local/bin/python -u /app/flaresolverr.py",
+      "ctn_createdat": "2026-09-29 15:42:41 +0000 UTC",
+      "ctn_id": "7506cd267bea9aa15cdb4400f741b9aef819ff22e97958ea2fced92f8a888552",
+      "ctn_names": "flaresolverr",
+      "ctn_size": "0B",
+      "ctn_state": "running",
+      "ctn_status": "Up 36 hours"
+    }
+  },
+  {
+    "diun_version": "v4.33.1",
+    "hostname": "688f1b9de17f",
+    "status": "new",
+    "provider": "docker",
+    "image": "ghcr.io/dictionarry-hub/profilarr:latest",
+    "hub_link": "https://github.com/Dictionarry-Hub/profilarr",
+    "mime_type": "application/vnd.oci.image.index.v1+json",
+    "digest": "sha256:352e42dec74ecfd68d13bb198fbc6d9346e3a8c55003026e1814e59319a2176d",
+    "created": "2026-10-21T16:57:26.609062034Z",
+    "platform": "linux/arm64",
+    "metadata": {
+      "ctn_command": "/sbin/tini -- /entrypoint.sh",
+      "ctn_createdat": "2026-10-26 08:19:32 +0000 UTC",
+      "ctn_id": "823786b2d05ebe3eb7f2ea2087e40d264c51661de8161c2c069dbfff2449b01a",
+      "ctn_names": "profilarr",
+      "ctn_size": "0B",
+      "ctn_state": "running",
+      "ctn_status": "Up 3 minutes (healthy)"
+    }
+  }
+]
