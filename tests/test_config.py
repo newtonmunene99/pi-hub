@@ -151,6 +151,17 @@ class ApplyUpdateTests(unittest.TestCase):
         new, _ = config.apply_update(cfg, {"services": [view]})
         self.assertEqual(new["services"][0]["log"], "/l/meta.log")
 
+    def test_container_survives_a_save_and_can_be_changed_or_cleared(self):
+        cfg = config.normalise({"services": [{"name": "Media", "port": "1", "container": "media-server"}]})
+        view = config.public_services(cfg)[0]
+        view.pop("container")
+        new, _ = config.apply_update(cfg, {"services": [view]})
+        self.assertEqual(new["services"][0]["container"], "media-server")
+        new, _ = config.apply_update(cfg, {"services": [{**view, "container": "jellyfin"}]})
+        self.assertEqual(new["services"][0]["container"], "jellyfin")
+        new, _ = config.apply_update(cfg, {"services": [{**view, "container": ""}]})
+        self.assertNotIn("container", new["services"][0])
+
     def test_blank_rows_are_dropped_and_new_rows_added(self):
         view = config.public_services(base())[0]
         new, _ = config.apply_update(base(), {"services": [view, {"name": ""}, {"name": "New App", "port": "3000"}]})
