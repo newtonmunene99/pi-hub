@@ -1,0 +1,8 @@
+Show sample image updates in demo mode
+
+PIHUB_DEMO=1 now lists two image updates kept in memory: Sonarr (matched to
+the demo service, 3 hours old) and FlareSolverr (no matching service, 26
+hours old), so the sidebar and badges can be worked on and screenshotted
+without Diun. Dismissing works and lasts until restart.
+
+Files: pihub/demo.py, pihub/__main__.py, tests/test_updates.py
