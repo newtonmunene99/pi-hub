@@ -1,0 +1,20 @@
+Receive Diun update webhooks
+
+POST /api/hooks/diun stores image updates Diun reports. It needs no session
+but requires "Authorization: Bearer <PIHUB_WEBHOOK_TOKEN>", compared in
+constant time; 404 when no token is set, 401 for a wrong one, 415 for
+non-JSON, 400 for a malformed body, else 200 {"stored": bool}. It works in
+read-only mode, since receiving alerts edits nothing.
+
+PIHUB_WEBHOOK_TOKEN accepts env:/file: references and must resolve to at
+least 32 characters, or pi-hub exits with code 2: a long random token is
+what keeps the unthrottled hook unguessable. Updates are saved to
+updates.json next to the config (PIHUB_UPDATES overrides), and /api/state
+now always carries an "updates" list matched to the services.
+
+JSON body parsing moved into one helper shared by every POST endpoint;
+existing endpoints answer exactly as before. Reviewed by an independent
+verifier (approved).
+
+Files: pihub/updates.py, pihub/server.py, pihub/__main__.py,
+tests/test_updates.py, tests/test_server.py
