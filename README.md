@@ -41,8 +41,8 @@ ghcr.io/newtonmunene99/pi-hub
 
 | Tag | Updates to |
 |---|---|
-| `0.4` | the latest `0.4.x` bug-fix release — **recommended** |
-| `0.4.0` | exactly that release, never changes |
+| `0.5` | the latest `0.5.x` bug-fix release — **recommended** |
+| `0.5.0` | exactly that release, never changes |
 | `latest` | the newest release, including new minor versions |
 
 Without Compose, the same setup as the example above:
@@ -53,7 +53,7 @@ docker run -d --name pi-hub --restart unless-stopped \
   -e TZ=Etc/UTC \
   -v "$PWD/config:/config" \
   -v /mnt/media:/disks/media:ro \
-  ghcr.io/newtonmunene99/pi-hub:0.4
+  ghcr.io/newtonmunene99/pi-hub:0.5
 ```
 
 On bridge networking, replace `--network host` with `-p 8000:8000` and set each service's `host` in `config.json` to your server's LAN IP (see [Networking](docs/configuration.md#networking)).
