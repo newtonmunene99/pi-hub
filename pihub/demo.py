@@ -13,6 +13,7 @@ from typing import Any
 from . import config as cfgmod
 from .hub import service_view, settings_view, state_view
 from .integrations import is_scheduled
+from .updates import Updates
 from .util import fmt_duration
 
 DEMO_CONFIG = {
@@ -110,6 +111,46 @@ VERSIONS = {
     "overseerr": "1.34.0",
     "portainer": "2.27.1",
 }
+
+
+# (hours ago, Diun webhook body trimmed to the fields pi-hub reads). Sonarr
+# matches a demo service; FlareSolverr shows how an unclaimed image is listed.
+DEMO_UPDATES: list[tuple[float, dict[str, Any]]] = [
+    (
+        3,
+        {
+            "status": "update",
+            "image": "lscr.io/linuxserver/sonarr:latest",
+            "hub_link": "https://github.com/linuxserver/docker-sonarr/releases",
+            "digest": "sha256:" + "5" * 64,
+            "created": "2026-10-27T04:12:09Z",
+            "metadata": {"ctn_names": "sonarr"},
+        },
+    ),
+    (
+        26,
+        {
+            "status": "update",
+            "image": "ghcr.io/flaresolverr/flaresolverr:v3.4",
+            "hub_link": "https://github.com/FlareSolverr/FlareSolverr/releases",
+            "digest": "sha256:" + "f" * 64,
+            "created": "2026-10-25T18:40:51Z",
+            "metadata": {"ctn_names": "flaresolverr"},
+        },
+    ),
+]
+
+
+def demo_updates() -> Updates:
+    """An in-memory store holding the sample updates; dismissing them lasts until restart."""
+    now = time.time()
+    updates = Updates()
+    for hours, body in DEMO_UPDATES:
+        received = now - hours * 3600
+        updates.clock = lambda: received  # noqa: B023 - called by record() within this iteration
+        updates.record(body)
+    updates.clock = time.time
+    return updates
 
 
 class DemoHub:

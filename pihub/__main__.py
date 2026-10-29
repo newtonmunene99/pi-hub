@@ -54,9 +54,10 @@ def main() -> None:
     hub: HubAPI
     updates: Updates | None = None
     if demo:
-        from .demo import DemoHub
+        from .demo import DemoHub, demo_updates
 
         hub = DemoHub()
+        updates = demo_updates()
     else:
         from .hub import Hub
 

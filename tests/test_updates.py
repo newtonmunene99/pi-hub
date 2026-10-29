@@ -228,5 +228,17 @@ class TokenTests(unittest.TestCase):
         self.assertEqual(updates.updates_path({"PIHUB_UPDATES": "/data/u.json"}, "/config/config.json"), "/data/u.json")
 
 
+class DemoTests(unittest.TestCase):
+    def test_demo_has_one_matched_and_one_unmatched_update(self):
+        from pihub.demo import DemoHub, demo_updates
+
+        u = demo_updates()
+        view = u.view(DemoHub().state()["services"])
+        self.assertEqual(sorted(v["services"] for v in view), [[], ["sonarr"]])
+        self.assertTrue(all(v["hubLink"].startswith("https://") for v in view))
+        u.dismiss(all=True)
+        self.assertEqual(u.entries(), [])
+
+
 if __name__ == "__main__":
     unittest.main()
