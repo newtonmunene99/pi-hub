@@ -1,0 +1,11 @@
+Dismiss image updates
+
+POST /api/updates/dismiss takes {"image": "<image>"} or {"all": true},
+forgets those updates (saved to updates.json) and answers with the new list.
+It needs a session and JSON like the other settings endpoints, is refused
+with 403 in read-only mode, answers 400 for any other body and 404 when the
+server keeps no updates. An unknown image is a no-op, so a double click or
+two open tabs never errors.
+
+Files: pihub/updates.py, pihub/server.py, tests/test_updates.py,
+tests/test_server.py
