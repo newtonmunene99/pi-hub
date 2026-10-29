@@ -124,5 +124,64 @@ class StoreTests(unittest.TestCase):
         self.assertEqual([e["image"] for e in u.entries()], ["app3", "app2", "app1"])
 
 
+class ViewTests(unittest.TestCase):
+    def test_normalise_name(self):
+        self.assertEqual(updates.normalise_name("Media_Server-2 "), "mediaserver2")
+
+    def test_matches_by_id_or_name_and_labels(self):
+        u = Updates(clock=Clock())
+        u.record(payload(1, status="update"))
+        [v] = u.view(
+            [{"id": "x", "name": "Profil-arr", "container": ""}, {"id": "other", "name": "O", "container": ""}]
+        )
+        self.assertEqual(
+            v,
+            {
+                "image": "ghcr.io/dictionarry-hub/profilarr:latest",
+                "digest": "sha256:352e42dec74ecfd68d13bb198fbc6d9346e3a8c55003026e1814e59319a2176d",
+                "hubLink": "https://github.com/Dictionarry-Hub/profilarr",
+                "created": "2026-10-21T16:57:26.609062034Z",
+                "containers": ["profilarr"],
+                "received": 1_000_000.0,
+                "tag": "latest",
+                "services": ["x"],
+                "label": "Profil-arr",
+            },
+        )
+
+    def test_container_field_overrides_name(self):
+        u = Updates(clock=Clock())
+        u.record(payload(1, status="update", metadata={"ctn_names": "media-server"}))
+        svcs = [
+            {"id": "profilarr", "name": "Profilarr", "container": "media-server"},
+            {"id": "media-server", "name": "x", "container": "other"},
+        ]
+        self.assertEqual(u.view(svcs)[0]["services"], ["profilarr"])
+        u.record(payload(0, status="update", metadata={"ctn_names": "profilarr"}))
+        flare = next(v for v in u.view(svcs) if v["image"].startswith("ghcr.io/flaresolverr"))
+        self.assertEqual(flare["services"], [])
+
+    def test_unmatched_labels_and_tag_parsing(self):
+        cases = [
+            ("registry:5000/app", "kometa", "latest", "kometa"),
+            ("ghcr.io/x/y:0.4", "", "0.4", "ghcr.io/x/y"),
+            ("nginx:1.27@sha256:abc", "", "1.27", "nginx"),
+        ]
+        for image, names, tag, label in cases:
+            with self.subTest(image=image):
+                u = Updates(clock=Clock())
+                u.record(payload(0, status="update", image=image, metadata={"ctn_names": names}))
+                [v] = u.view([{"id": "radarr", "name": "Radarr", "container": ""}])
+                self.assertEqual((v["tag"], v["label"], v["services"]), (tag, label, []))
+
+    def test_sorted_newest_first(self):
+        clock = Clock()
+        u = Updates(clock=clock)
+        u.record(payload(0, status="update"))
+        clock.now += 60
+        u.record(payload(1, status="update"))
+        self.assertEqual([v["label"] for v in u.view([])], ["profilarr", "flaresolverr"])
+
+
 if __name__ == "__main__":
     unittest.main()

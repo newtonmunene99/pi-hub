@@ -10,9 +10,10 @@ time it sees an image, which says nothing about an update.
 
 import json
 import os
+import re
 import threading
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Mapping, Sequence
 from typing import Any
 
 MAX_ENTRIES = 200
@@ -20,6 +21,23 @@ MAX_ENTRIES = 200
 
 class UpdatesError(ValueError):
     """Bad webhook payload or token setting; the message is safe to show."""
+
+
+def normalise_name(text: str) -> str:
+    """Lowercase alphanumerics only, so "Media_Server" and "media-server" compare equal."""
+    return re.sub(r"[^a-z0-9]", "", text.lower())
+
+
+def split_image(image: str) -> tuple[str, str]:
+    """Splits ``"ghcr.io/x/y:0.4"`` into ``("ghcr.io/x/y", "0.4")``; no tag means ``latest``.
+
+    A colon before the last ``/`` is a registry port, not a tag.
+    """
+    name = image.split("@", 1)[0]
+    path, sep, tag = name.rpartition(":")
+    if not sep or "/" in tag:
+        return name, "latest"
+    return path, tag
 
 
 class Updates:
@@ -97,6 +115,39 @@ class Updates:
         with self.lock:
             items = [{**e, "containers": list(e["containers"])} for e in self.data.values()]
         return sorted(items, key=lambda e: e["received"], reverse=True)
+
+    def view(self, services: Sequence[Mapping[str, Any]]) -> list[dict[str, Any]]:
+        """The ``updates`` list for /api/state, matched to the dashboard's services.
+
+        An entry matches a service when one of its container names equals the
+        service's ``container`` field, or its id or name when that field is
+        empty (compared with ``normalise_name``).
+
+        Args:
+            services: Service views with ``id``, ``name`` and ``container``.
+
+        Returns:
+            Entries newest first, each with ``tag``, ``services`` (matched ids)
+            and ``label`` (the first matched service's name, else the first
+            container name, else the image without its tag) added.
+        """
+        out = []
+        for entry in self.entries():
+            names = {normalise_name(c) for c in entry["containers"]}
+            matched = [
+                s
+                for s in services
+                if names
+                & (
+                    {normalise_name(s["container"])}
+                    if s.get("container")
+                    else {normalise_name(s["id"]), normalise_name(s["name"])}
+                )
+            ]
+            path, tag = split_image(entry["image"])
+            label = matched[0]["name"] if matched else (entry["containers"] or [path])[0]
+            out.append({**entry, "tag": tag, "services": [s["id"] for s in matched], "label": label})
+        return out
 
     def _save(self) -> None:
         """Writes entries atomically, readable only by the owner. Call with the lock held."""
