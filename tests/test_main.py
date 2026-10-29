@@ -23,7 +23,9 @@ class StartupTests(unittest.TestCase):
         self.assertNotIn("tooshort-secret", result.stderr)
 
     def test_reference_to_a_missing_file_exits_2(self):
-        self.assertEqual(self.run_pihub(PIHUB_WEBHOOK_TOKEN="file:/nonexistent/token").returncode, 2)
+        result = self.run_pihub(PIHUB_WEBHOOK_TOKEN="file:/nonexistent/token")
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("PIHUB_WEBHOOK_TOKEN must be at least 32 characters", result.stderr)
 
 
 if __name__ == "__main__":
