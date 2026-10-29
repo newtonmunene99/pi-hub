@@ -108,6 +108,15 @@ button { cursor: pointer; }
 .q .thin i { background: var(--a600); }
 .sched { display: flex; justify-content: space-between; gap: 8px; padding: 8px 0; border-top: 1px solid var(--n900); font-size: 13px; }
 .note { font-size: 12px; color: var(--n500); padding: 10px 0; border-top: 1px solid var(--n900); }
+.note.bad { color: var(--bad); }
+.upd { padding: 8px 0; border-top: 1px solid var(--n900); font-size: 13px; }
+.upd .h { display: flex; align-items: center; gap: 8px; }
+.upd .h > span:first-child { flex: 1; font-weight: 500; }
+.upd .chip { max-width: 40%; }
+.upd .x { font-size: 18px; }
+.upd .w { display: inline-block; margin-top: 2px; font-size: 12px; color: var(--a300); }
+.upd .w:hover { color: var(--text); }
+.updates .clear { margin: 6px 0 0 -12px; }
 
 /* modal */
 .backdrop { position: fixed; inset: 0; background: rgba(22,24,38,.72); display: flex; justify-content: center; align-items: flex-start; padding: 120px 16px 16px; z-index: 10; }
@@ -206,7 +215,11 @@ button { cursor: pointer; }
   .card .r2 .ell { display: none; }
   .card .r2 .port { background: none; font-size: 15px; padding: 0; }
   .all-label { display: block !important; margin: 20px 0 4px; }
-  .side { display: none; }
+  /* Only image updates make it onto the phone layout: they need acting on. */
+  .side { padding: 4px 16px 16px; border-top: 0; background: none; }
+  .side:not(:has(.updates)), .side > section:not(.updates) { display: none; }
+  .upd .x, .updates .clear { min-width: 44px; min-height: 44px; }
+  .upd .w { padding: 6px 0; }
   .stats { margin: 16px; border-radius: 12px; background: var(--side); box-shadow: 0 0 0 1px var(--n900); padding: 12px 14px; gap: 10px 8px; border: 0; grid-template-columns: repeat(auto-fill, minmax(72px, 1fr)); }
   .stat { background: none; padding: 0; }
   .stat .label { font-size: 10px; }

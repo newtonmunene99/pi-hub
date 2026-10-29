@@ -7,7 +7,7 @@ const INFO_SVG = '<svg width="16" height="16" viewBox="0 0 256 256" fill="curren
 const STAR = filled => `<svg width="16" height="16" viewBox="0 0 24 24" aria-hidden="true" fill="${filled ? 'currentColor' : 'none'}" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"><path d="M12 3.5l2.6 5.3 5.9.9-4.3 4.1 1 5.8L12 16.9l-5.2 2.7 1-5.8-4.3-4.1 5.9-.9z"/></svg>`;
 const MORE_SVG = '<svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><circle cx="5" cy="12" r="1.8"/><circle cx="12" cy="12" r="1.8"/><circle cx="19" cy="12" r="1.8"/></svg>';
 const host = location.hostname;
-let data = null, cat = 'All', query = '', selected = null;
+let data = null, cat = 'All', query = '', selected = null, updErr = '';
 
 /* ── helpers ── */
 function urlOf(s) {
@@ -21,6 +21,8 @@ const dotCls = s => s.cron ? '' : s.up === null ? 'wait' : s.up ? '' : 'down';
 const matches = s => { const q = query.trim().toLowerCase(); return !q || `${s.name} ${s.port} ${s.description}`.toLowerCase().includes(q); };
 const visible = () => data.services.filter(s => (cat === 'All' || s.category === cat) && matches(s));
 const pct = n => Math.max(0, Math.min(100, n)).toFixed(0);
+// The server only keeps http(s) links; checked again so a stray value never becomes a javascript: href.
+const safeLink = u => /^https?:\/\//i.test(u || '') ? u : '';
 
 /* ── dashboard ── */
 function renderHeader() {
@@ -82,6 +84,20 @@ function renderGrid() {
 
 function renderSide() {
   const sections = [];
+  const ups = data.updates || [];
+  if (ups.length) {
+    const edit = !data.readonly;
+    const rows = ups.map(u => {
+      const link = safeLink(u.hubLink);
+      return `
+      <div class="upd"><div class="h"><span class="ell" title="${esc(u.image)}">${esc(u.label)}</span><span class="chip ell">${esc(u.tag)}</span>
+        ${edit ? `<button class="x" data-dismiss="${esc(u.image)}" title="Dismiss" aria-label="Dismiss update for ${esc(u.label)}">×</button>` : ''}</div>
+        ${link ? `<a class="w" href="${esc(link)}" target="_blank" rel="noopener noreferrer">Release notes ↗</a>` : ''}</div>`;
+    }).join('');
+    const all = edit && ups.length > 1 ? '<button class="btn-ghost clear" data-dismiss-all>Clear all</button>' : '';
+    const err = updErr ? `<div class="note bad" role="alert">${esc(updErr)}</div>` : '';
+    sections.push(`<section class="updates"><h2 class="label">Updates available · ${ups.length}</h2>${rows}${err}${all}</section>`);
+  }
   if (data.playing) {
     const rows = data.playing.length ? data.playing.map(x => `
       <div class="row"><div class="t ell">${esc(x.title)}</div><div class="w ell">${esc(x.who)} · ${esc(x.how)}${x.state === 'paused' ? ' · paused' : ''}</div>
@@ -179,6 +195,25 @@ document.addEventListener('click', e => {
   if (cp) { copy(cp.dataset.copy).then(ok => { cp.textContent = ok ? 'Copied' : 'Copy failed'; setTimeout(() => { cp.textContent = 'Copy'; }, 1500); }); return; }
   const ed = e.target.closest('[data-edit]');
   if (ed) { selected = null; renderModal(); highlight = ed.dataset.edit; location.hash = 'settings'; }
+});
+
+async function dismissUpdates(body) {
+  try {
+    const r = await api('api/updates/dismiss', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+    const out = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(out.error || `Request failed (${r.status})`);
+    updErr = '';
+    if (data) data.updates = out.updates;
+  } catch (e) {
+    if (e.auth) return;
+    updErr = `Couldn't dismiss: ${e.message}`;
+  }
+  render();
+}
+$('#side').addEventListener('click', e => {
+  const one = e.target.closest('[data-dismiss]');
+  if (one) { dismissUpdates({ image: one.dataset.dismiss }); return; }
+  if (e.target.closest('[data-dismiss-all]')) dismissUpdates({ all: true });
 });
 
 /* ── sign-in ── */
