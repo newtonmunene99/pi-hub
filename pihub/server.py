@@ -10,9 +10,10 @@
   GET  /api/config   services for the settings page (secrets masked)
   POST /api/config   save services edited in the settings page
 
-With PIHUB_WEBHOOK_TOKEN set (see updates.py):
-  POST /api/hooks/diun  Diun webhook; needs "Authorization: Bearer <token>", not a session
+Image updates from Diun (see updates.py), whenever the server keeps them:
   POST /api/updates/dismiss  forget one update ({"image"}) or all of them ({"all": true})
+  POST /api/hooks/diun       Diun webhook; only with PIHUB_WEBHOOK_TOKEN set, and it needs
+                             "Authorization: Bearer <token>" rather than a session
 
 With a host agent (PIHUB_AGENT_SOCKET, see hostagent.py):
   GET  /api/host          agent status and running Claude sessions

@@ -223,6 +223,10 @@ class TokenTests(unittest.TestCase):
             with self.subTest(bad=bad), self.assertRaisesRegex(UpdatesError, "at least 32 characters"):
                 updates.token_from_env({"PIHUB_WEBHOOK_TOKEN": bad})
 
+    def test_updates_path(self):
+        self.assertEqual(updates.updates_path({}, "/config/config.json"), "/config/updates.json")
+        self.assertEqual(updates.updates_path({"PIHUB_UPDATES": "/data/u.json"}, "/config/config.json"), "/data/u.json")
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -45,6 +45,11 @@ def token_from_env(environ: Mapping[str, str]) -> str:
     return token
 
 
+def updates_path(environ: Mapping[str, str], config_path: str) -> str:
+    """Where updates are saved: ``PIHUB_UPDATES``, else ``updates.json`` next to the config."""
+    return environ.get("PIHUB_UPDATES") or os.path.join(os.path.dirname(config_path), "updates.json")
+
+
 def _valid_entry(entry: object) -> bool:
     """True if a loaded entry has the shape ``record`` writes, so reading it cannot fail later."""
     return (

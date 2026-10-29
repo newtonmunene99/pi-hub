@@ -28,7 +28,7 @@ from .auth import AuthError, auth_from_env
 from .config import ConfigError
 from .hostagent import AgentClient
 from .server import HubAPI, serve
-from .updates import Updates, UpdatesError, token_from_env
+from .updates import Updates, UpdatesError, token_from_env, updates_path
 
 
 def main() -> None:
@@ -68,7 +68,7 @@ def main() -> None:
             sys.exit(2)
         threading.Thread(target=real_hub.run_forever, daemon=True).start()
         hub = real_hub
-        updates = Updates(os.environ.get("PIHUB_UPDATES") or os.path.join(os.path.dirname(config_path), "updates.json"))
+        updates = Updates(updates_path(os.environ, config_path))
 
     socket_path = os.environ.get("PIHUB_AGENT_SOCKET", "")
     agent = AgentClient(socket_path) if socket_path else None
