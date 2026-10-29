@@ -1,0 +1,8 @@
+Badge services with image updates
+
+Cards and pinned tiles of services with a pending image update show a small
+Update badge, and the service details popup shows "Update available" with
+the tag and a Release notes link. Settings gains a Container field under the
+more-options panel for services whose Docker container is named differently.
+
+Files: pihub/static/app.js, pihub/static/app.css
