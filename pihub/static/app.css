@@ -116,6 +116,12 @@ button { cursor: pointer; }
 .upd .x { font-size: 18px; }
 .upd .w { display: inline-block; margin-top: 2px; font-size: 12px; color: var(--a300); }
 .upd .w:hover { color: var(--text); }
+.upd .acts { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-top: 4px; }
+.upd .acts .w { margin-top: 0; }
+.upd .upd-go { padding: 3px 10px; font-size: 12px; white-space: nowrap; }
+.upd .upd-go.armed { background: var(--a900); }
+.upd .upd-go:disabled { opacity: .6; cursor: default; }
+.upd-err { margin-top: 4px; font-size: 12px; color: var(--bad); overflow-wrap: anywhere; }
 .updates .clear { margin: 6px 0 0 -12px; }
 .upd-badge { display: inline-block; margin-left: 8px; padding: 1px 6px; border-radius: 4px; font-size: 10px; font-weight: 500; letter-spacing: .04em; text-transform: uppercase; vertical-align: 2px; color: var(--a300); background: var(--a900); box-shadow: 0 0 0 1px var(--a800); }
 .upd-line { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; font-size: 13px; }
@@ -223,7 +229,7 @@ button { cursor: pointer; }
   /* Only image updates make it onto the phone layout: they need acting on. */
   .side { padding: 4px 16px 16px; border-top: 0; background: none; }
   .side:not(:has(.updates)), .side > section:not(.updates) { display: none; }
-  .upd .x, .updates .clear { min-width: 44px; min-height: 44px; }
+  .upd .x, .updates .clear, .upd-go { min-width: 44px; min-height: 44px; }
   .upd .w { padding: 6px 0; }
   .stats { margin: 16px; border-radius: 12px; background: var(--side); box-shadow: 0 0 0 1px var(--n900); padding: 12px 14px; gap: 10px 8px; border: 0; grid-template-columns: repeat(auto-fill, minmax(72px, 1fr)); }
   .stat { background: none; padding: 0; }

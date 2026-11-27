@@ -26,6 +26,50 @@ const safeLink = u => /^https?:\/\//i.test(u || '') ? u : '';
 const updFor = id => (data.updates || []).find(u => u.services.includes(id));
 const updBadge = s => updFor(s.id) ? '<span class="upd-badge" title="Update available">Update</span>' : '';
 
+/* ── container updates through the host agent ── */
+// sideHost is the agent status as the sidebar last saw it, kept apart from the Host panel's hostState.
+let sideHost = null, updJobArmed = null, updJobArmTimer = null, updPoll = null;
+const updJobErr = {}, updPosting = new Set();  // image -> refusal lines; images whose POSTs are in flight
+const canUpdate = u => !data.readonly && data.hostAgent && !!sideHost?.docker && u.containers.length > 0;
+// Only jobs started after Diun reported this digest count: an older finished job is about an earlier update.
+const jobsFor = u => (sideHost?.updates || []).filter(j => u.containers.includes(j.container) && j.started >= Math.floor(u.received));
+const updRunning = u => updPosting.has(u.image) || jobsFor(u).some(j => j.state === 'running');
+const updDone = u => u.containers.every(c => jobsFor(u).some(j => j.container === c && j.state === 'done'));
+const prefixed = (c, msg) => msg.startsWith(`${c}:`) ? msg : `${c}: ${msg}`;
+function updErrors(u) {
+  if (updRunning(u)) return [];
+  const failed = jobsFor(u).filter(j => j.state === 'failed').map(j => prefixed(j.container, j.message || 'Update failed'));
+  return [...(updJobErr[u.image] || []), ...failed];
+}
+
+async function loadSideHost() {
+  try { sideHost = await hostApi('api/host'); } catch (e) { return false; }  // pi-hub or the agent restarting: try again later
+  return true;
+}
+
+// Polls the agent every 2 s while any listed update is running, then dismisses the ones that finished.
+async function pollUpdates() {
+  clearTimeout(updPoll); updPoll = null;
+  const loaded = await loadSideHost();
+  const ups = data?.updates || [];
+  if (loaded) {
+    for (const u of ups) if (canUpdate(u) && !updRunning(u) && updDone(u)) { delete updJobErr[u.image]; await dismissUpdates({ image: u.image }); }
+  }
+  render();
+  if (ups.some(updRunning)) updPoll = setTimeout(pollUpdates, 2000);  // a failed load keeps the last status, so this keeps polling
+}
+
+async function startUpdate(u) {
+  updPosting.add(u.image); delete updJobErr[u.image]; render();
+  const errs = [];
+  for (const c of u.containers) {
+    try { await hostApi('api/host/update', { container: c }); } catch (e) { if (e.auth) return; errs.push(prefixed(c, e.message)); }
+  }
+  updPosting.delete(u.image);
+  if (errs.length) updJobErr[u.image] = errs;
+  await pollUpdates();
+}
+
 /* ── dashboard ── */
 function renderHeader() {
   $('#title').textContent = data.title;
@@ -91,10 +135,14 @@ function renderSide() {
     const edit = !data.readonly;
     const rows = ups.map(u => {
       const link = safeLink(u.hubLink);
+      const running = updRunning(u), armed = updJobArmed === u.image;
+      const go = edit && canUpdate(u) ? `<button class="btn-out upd-go${armed ? ' armed' : ''}" data-upd="${esc(u.image)}"${running ? ' disabled' : ''}
+          aria-label="Update ${esc(u.label)}">${running ? 'Updating…' : armed ? 'Tap again to update' : 'Update'}</button>` : '';
+      const errs = updErrors(u).map(m => `<div class="upd-err" role="alert">${esc(m)}</div>`).join('');
       return `
       <div class="upd"><div class="h"><span class="ell" title="${esc(u.image)}">${esc(u.label)}</span><span class="chip ell">${esc(u.tag)}</span>
         ${edit ? `<button class="x" data-dismiss="${esc(u.image)}" title="Dismiss" aria-label="Dismiss update for ${esc(u.label)}">×</button>` : ''}</div>
-        ${link ? `<a class="w" href="${esc(link)}" target="_blank" rel="noopener noreferrer">Release notes ↗</a>` : ''}</div>`;
+        ${link || go ? `<div class="acts">${link ? `<a class="w" href="${esc(link)}" target="_blank" rel="noopener noreferrer">Release notes ↗</a>` : '<span></span>'}${go}</div>` : ''}${errs}</div>`;
     }).join('');
     const all = edit && ups.length > 1 ? '<button class="btn-ghost clear" data-dismiss-all>Clear all</button>' : '';
     const err = updErr ? `<div class="note bad" role="alert">${esc(updErr)}</div>` : '';
@@ -169,7 +217,12 @@ async function refresh() {
     const r = await api('api/state');
     if (!r.ok) return;
     const fresh = await r.json();
-    if (!signedOut()) { data = fresh; render(); }  // a reply that lands after sign-out is dropped
+    if (!signedOut()) {  // a reply that lands after sign-out is dropped
+      data = fresh;
+      if (data.hostAgent && !data.readonly && data.updates?.length && !sideHost) await loadSideHost();
+      render();
+      if (!updPoll && (data.updates || []).some(updRunning)) updPoll = setTimeout(pollUpdates, 2000);
+    }
   } catch (e) { /* offline or signed out: keep showing the last data */ }
 }
 
@@ -216,6 +269,19 @@ async function dismissUpdates(body) {
   render();
 }
 $('#side').addEventListener('click', e => {
+  const go = e.target.closest('[data-upd]');
+  if (go) {
+    const u = (data.updates || []).find(x => x.image === go.dataset.upd);
+    if (!u || updRunning(u)) return;
+    clearTimeout(updJobArmTimer);
+    if (updJobArmed !== u.image) {  // first tap arms for 4 s, like Restart
+      updJobArmed = u.image;
+      updJobArmTimer = setTimeout(() => { updJobArmed = null; render(); }, 4000);
+      render(); return;
+    }
+    updJobArmed = null;
+    startUpdate(u); return;
+  }
   const one = e.target.closest('[data-dismiss]');
   if (one) { dismissUpdates({ image: one.dataset.dismiss }); return; }
   if (e.target.closest('[data-dismiss-all]')) dismissUpdates({ all: true });
