@@ -37,6 +37,7 @@ import subprocess
 import threading
 import time
 import uuid
+from collections.abc import Callable
 from typing import Any
 
 logger = logging.getLogger("pihub.hostagent")
@@ -49,6 +50,7 @@ ANSI = re.compile(r"\x1b\[[0-9;?]*[A-Za-z]|\x1b\][^\x07]*\x07")
 SESSION_URL = re.compile(r"https://claude\.ai/code[^\s\x07\x1b]*")
 CONTAINER_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,127}")
 INSPECT_TIMEOUT = 10  # seconds; under the dashboard's socket timeout so a refusal reaches it
+JOB_TTL = 3600  # seconds a finished update job stays in the status
 UPDATE_TIMEOUT = 900  # seconds per docker compose command; big images on a Pi pull slowly
 COMPOSE_LABELS = (
     "com.docker.compose.project",
@@ -78,7 +80,9 @@ class Agent:
         reboot: str = "",
         start_grace: float = START_GRACE,
         docker: str = "",
+        clock: Callable[[], float] = time.time,
     ) -> None:
+        self.clock = clock
         self.start_grace = start_grace
         self.root = os.path.realpath(root)
         self.state_dir = state_dir
@@ -249,7 +253,7 @@ class Agent:
         with self.lock:
             if self.jobs.get(container, {}).get("state") == "running":
                 raise AgentError(f"{container} is already updating")
-            job = {"container": container, "state": "running", "started": int(time.time())}
+            job = {"container": container, "state": "running", "started": int(self.clock())}
             self.jobs[container] = job
         base = [self.docker or "docker", "compose", "-p", project]
         for f in files:
@@ -279,7 +283,7 @@ class Agent:
                 break
         with self.lock:
             job = self.jobs[container]
-            job["finished"] = int(time.time())
+            job["finished"] = int(self.clock())
             if message:
                 job.update(state="failed", message=message)
             else:
@@ -317,11 +321,22 @@ class Agent:
                 raise AgentError(f"{name}: can't read {path} on the host")
         return project, cwd, paths, service
 
+    def update_jobs(self) -> list[dict]:
+        """Update jobs, oldest first, forgetting those that finished more than an hour ago."""
+        cutoff = self.clock() - JOB_TTL
+        with self.lock:
+            for name, job in list(self.jobs.items()):
+                if job.get("finished", cutoff) < cutoff:
+                    del self.jobs[name]
+            return sorted((dict(j) for j in self.jobs.values()), key=lambda j: j["started"])
+
     # ── dispatch ──
     def status(self) -> dict:
         return {
             "claude": bool(self.claude),
             "reboot": bool(self.reboot_cmd),
+            "docker": bool(self.docker),
+            "updates": self.update_jobs(),
             "root": self.root,
             "sessions": self.sessions(),
         }
@@ -422,14 +437,16 @@ def main() -> None:
         state_dir=os.environ.get("PIHUB_AGENT_STATE") or os.path.expanduser("~/.local/state/pihub"),
         claude=os.environ.get("PIHUB_AGENT_CLAUDE", "claude"),
         reboot=os.environ.get("PIHUB_AGENT_REBOOT", "sudo -n systemctl reboot"),
+        docker=os.environ.get("PIHUB_AGENT_DOCKER", "docker"),
     )
     server = serve(agent, path)
     logger.info(
-        "pi-hub host agent on %s (root %s, claude %s, reboot %s)",
+        "pi-hub host agent on %s (root %s, claude %s, reboot %s, docker %s)",
         path,
         agent.root,
         agent.claude or "off",
         shlex.join(agent.reboot_cmd) or "off",
+        agent.docker or "off",
     )
     with contextlib.suppress(KeyboardInterrupt):
         server.serve_forever()

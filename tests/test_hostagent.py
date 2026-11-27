@@ -240,6 +240,26 @@ class UpdateTests(unittest.TestCase):
         self.assertEqual(self.agent.update("slow")["state"], "running")
         self.job("slow")
 
+    def test_status_reports_docker_and_jobs(self):
+        self.agent.update("radarr")
+        self.job("radarr")
+        status = self.agent.status()
+        self.assertTrue(status["docker"])
+        self.assertEqual([(j["container"], j["state"]) for j in status["updates"]], [("radarr", "done")])
+        off = Agent(self.tmp, os.path.join(self.tmp, "state"), claude="", docker="")
+        self.assertEqual((off.status()["docker"], off.status()["updates"]), (False, []))
+
+    def test_finished_jobs_expire_after_an_hour(self):
+        now = [1_000_000.0]
+        self.agent.clock = lambda: now[0]
+        self.agent.update("radarr")
+        self.assertEqual(self.job("radarr")["finished"], 1_000_000)
+        self.agent.jobs["waiting"] = {"container": "waiting", "state": "running", "started": 0}
+        now[0] += 3599
+        self.assertEqual([j["container"] for j in self.agent.status()["updates"]], ["waiting", "radarr"])
+        now[0] += 2
+        self.assertEqual([j["container"] for j in self.agent.status()["updates"]], ["waiting"])
+
     def test_handle_update_reports_refusal(self):
         self.assertEqual(
             self.agent.handle({"action": "update", "container": "ghost"}), {"error": "No container named ghost"}
