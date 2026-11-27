@@ -4,6 +4,8 @@ All notable changes are listed here. The format follows [Keep a Changelog](https
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-11-27
+
 ### Added
 
 - *Update* button on each entry under *Updates available*: with the host agent running, it pulls the new image and recreates that container with Docker Compose (`pull`, then `up -d --no-deps`), then clears the entry. Needs the agent's user in the `docker` group; `PIHUB_AGENT_DOCKER=""` turns it off. See *Container updates (Diun)* in docs/configuration.md.
