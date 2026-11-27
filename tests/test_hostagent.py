@@ -194,6 +194,52 @@ class UpdateTests(unittest.TestCase):
                 self.agent.update("locked")
             self.assertEqual(str(caught.exception), f"locked: can't read {self.stack}/locked.yml on the host")
 
+    def job(self, name, state="running"):
+        """Waits up to 5 s for the container's job to leave ``state`` and returns it."""
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline:
+            job = self.agent.jobs[name]
+            if job["state"] != state:
+                return dict(job)
+            time.sleep(0.05)
+        self.fail(f"{name} still {state}")
+
+    def compose_calls(self):
+        return [c for c in self.calls() if "|compose " in c]
+
+    def test_update_pulls_then_recreates(self):
+        started = self.agent.update("radarr")
+        self.assertEqual(started["container"], "radarr")
+        self.assertEqual(started["state"], "running")
+        job = self.job("radarr")
+        self.assertEqual(job["state"], "done")
+        self.assertGreaterEqual(job["finished"], started["started"])
+        files = f"-f {self.stack}/compose.yml -f {self.stack}/override.yml"
+        self.assertEqual(
+            self.compose_calls(),
+            [
+                f"{self.stack}|compose -p radarr {files} pull radarr",
+                f"{self.stack}|compose -p radarr {files} up -d --no-deps radarr",
+            ],
+        )
+
+    def test_failed_pull_skips_up(self):
+        self.agent.update("broken")
+        job = self.job("broken")
+        self.assertEqual(job["state"], "failed")
+        self.assertEqual(job["message"], "Error response from daemon: manifest unknown")
+        self.assertEqual(
+            self.compose_calls(), [f"{self.stack}|compose -p broken -f {self.stack}/compose.yml pull broken"]
+        )
+
+    def test_refuses_second_update_while_running(self):
+        self.agent.update("slow")
+        with self.assertRaisesRegex(AgentError, "^slow is already updating$"):
+            self.agent.update("slow")
+        self.assertEqual(self.job("slow")["state"], "done")
+        self.assertEqual(self.agent.update("slow")["state"], "running")
+        self.job("slow")
+
     def test_handle_update_reports_refusal(self):
         self.assertEqual(
             self.agent.handle({"action": "update", "container": "ghost"}), {"error": "No container named ghost"}

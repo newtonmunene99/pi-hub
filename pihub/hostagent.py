@@ -49,6 +49,7 @@ ANSI = re.compile(r"\x1b\[[0-9;?]*[A-Za-z]|\x1b\][^\x07]*\x07")
 SESSION_URL = re.compile(r"https://claude\.ai/code[^\s\x07\x1b]*")
 CONTAINER_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,127}")
 INSPECT_TIMEOUT = 10  # seconds; under the dashboard's socket timeout so a refusal reaches it
+UPDATE_TIMEOUT = 900  # seconds per docker compose command; big images on a Pi pull slowly
 COMPOSE_LABELS = (
     "com.docker.compose.project",
     "com.docker.compose.project.working_dir",
@@ -86,6 +87,7 @@ class Agent:
         self.docker = shutil.which(docker) if docker else None
         self.state_path = os.path.join(state_dir, "sessions.json")
         self.lock = threading.Lock()
+        self.jobs: dict[str, dict] = {}  # container -> update job, guarded by self.lock
         os.makedirs(state_dir, mode=0o700, exist_ok=True)
 
     # ── folders ──
@@ -238,9 +240,54 @@ class Agent:
 
     # ── container updates ──
     def update(self, container: str) -> dict:
-        """Checks that a container can be updated with Docker Compose."""
-        self._compose_target(container)
-        raise AgentError("Container updates aren't implemented yet")
+        """Starts pulling a container's image and recreating it; returns the job at once.
+
+        A pull can take minutes, far longer than one socket request, so the work runs in a
+        thread and its state shows up in ``status``.
+        """
+        project, cwd, files, service = self._compose_target(container)
+        with self.lock:
+            if self.jobs.get(container, {}).get("state") == "running":
+                raise AgentError(f"{container} is already updating")
+            job = {"container": container, "state": "running", "started": int(time.time())}
+            self.jobs[container] = job
+        base = [self.docker or "docker", "compose", "-p", project]
+        for f in files:
+            base += ["-f", f]
+        steps = [("pull", [*base, "pull", service]), ("up", [*base, "up", "-d", "--no-deps", service])]
+        threading.Thread(target=self._run_update, args=(container, cwd, steps), daemon=True).start()
+        logger.info("updating container %s (%s in %s)", container, service, cwd)
+        return dict(job)
+
+    def _run_update(self, container: str, cwd: str, steps: list[tuple[str, list[str]]]) -> None:
+        """Runs the compose steps in order, stopping at the first failure, and records the outcome."""
+        message = ""
+        for step, argv in steps:
+            try:
+                done = subprocess.run(argv, cwd=cwd, capture_output=True, text=True, timeout=UPDATE_TIMEOUT)
+            except subprocess.TimeoutExpired:
+                message = f"docker compose {step} timed out"
+                break
+            except OSError as e:
+                message = str(e)
+                break
+            if done.returncode:
+                # Compose reports errors on stderr; fall back to stdout, then to the exit code.
+                lines = [ln.strip() for ln in done.stderr.splitlines() if ln.strip()]
+                lines = lines or [ln.strip() for ln in done.stdout.splitlines() if ln.strip()]
+                message = lines[-1] if lines else f"docker compose {step} exited with {done.returncode}"
+                break
+        with self.lock:
+            job = self.jobs[container]
+            job["finished"] = int(time.time())
+            if message:
+                job.update(state="failed", message=message)
+            else:
+                job["state"] = "done"
+        if message:
+            logger.warning("updating container %s failed: %s", container, message)
+        else:
+            logger.info("updated container %s", container)
 
     def _compose_target(self, name: str) -> tuple[str, str, list[str], str]:
         """Finds a container's Compose project, folder, files and service from its labels."""
