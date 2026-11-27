@@ -123,7 +123,7 @@ class ServerTests(ServerCase):
 
 
 class FakeAgent:
-    """Stands in for AgentClient: records calls, refuses "list" outside the root."""
+    """Stands in for AgentClient: records calls, refuses "list" outside the root and updating "ghost"."""
 
     def __init__(self):
         self.calls = []
@@ -132,6 +132,8 @@ class FakeAgent:
         self.calls.append((action, params))
         if action == "list" and params.get("path") == "..":
             raise AgentError("That folder is outside the allowed root")
+        if action == "update" and params.get("container") == "ghost":
+            raise AgentError("No container named ghost")
         return {"action": action, **params}
 
 
@@ -141,6 +143,7 @@ class HostEndpointTests(ServerCase):
         self.assertFalse(json.loads(self.call("GET", "/api/state")[1])["hostAgent"])
         self.assertEqual(self.call("GET", "/api/host")[0], 404)
         self.assertEqual(self.call("POST", "/api/host/reboot", {}, JSON)[0], 404)
+        self.assertEqual(self.call("POST", "/api/host/update", {"container": "radarr"}, JSON)[0], 404)
 
     def test_forwards_to_agent(self):
         agent = FakeAgent()
@@ -153,6 +156,10 @@ class HostEndpointTests(ServerCase):
         self.call("POST", "/api/host/claude", {"path": "projects", "name": "x", "extra": "dropped"}, JSON)
         self.call("POST", "/api/host/stop", {"id": "abc"}, JSON)
         self.call("POST", "/api/host/reboot", {}, JSON)
+        status, data, _ = self.call("POST", "/api/host/update", {"container": "radarr", "extra": 1}, JSON)
+        self.assertEqual((status, json.loads(data)), (200, {"action": "update", "container": "radarr"}))
+        status, data, _ = self.call("POST", "/api/host/update", {"container": "ghost"}, JSON)
+        self.assertEqual((status, json.loads(data)), (400, {"error": "No container named ghost"}))
         self.assertEqual(
             agent.calls,
             [
@@ -162,6 +169,8 @@ class HostEndpointTests(ServerCase):
                 ("start", {"path": "projects", "name": "x"}),
                 ("stop", {"id": "abc"}),
                 ("reboot", {}),
+                ("update", {"container": "radarr"}),
+                ("update", {"container": "ghost"}),
             ],
         )
 
@@ -170,6 +179,7 @@ class HostEndpointTests(ServerCase):
         self.start(auth=env_auth(), agent=agent)
         self.assertEqual(self.call("GET", "/api/host")[0], 401)
         self.assertEqual(self.call("POST", "/api/host/reboot", {}, JSON)[0], 401)
+        self.assertEqual(self.call("POST", "/api/host/update", {"container": "radarr"}, JSON)[0], 401)
         _, auth = self.login()
         self.assertEqual(self.call("POST", "/api/host/reboot", {}, {**auth, "Content-Type": "text/plain"})[0], 415)
         self.assertEqual(self.call("POST", "/api/host/reboot", [], {**auth, **JSON})[0], 400)
@@ -180,6 +190,7 @@ class HostEndpointTests(ServerCase):
         agent = FakeAgent()
         self.start(readonly=True, agent=agent)
         self.assertEqual(self.call("POST", "/api/host/reboot", {}, JSON)[0], 403)
+        self.assertEqual(self.call("POST", "/api/host/update", {"container": "radarr"}, JSON)[0], 403)
         self.assertEqual(agent.calls, [])
 
 

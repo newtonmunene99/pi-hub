@@ -21,6 +21,7 @@ With a host agent (PIHUB_AGENT_SOCKET, see hostagent.py):
   POST /api/host/claude   start a session ({"path", "name"})
   POST /api/host/stop     stop a session ({"id"})
   POST /api/host/reboot   restart the machine
+  POST /api/host/update   pull and recreate one container with Docker Compose ({"container"})
 
 With sign-in on (see auth.py), every other /api/ endpoint needs the HttpOnly
 session cookie set by /api/login; the static UI stays public so the sign-in
@@ -56,6 +57,7 @@ HOST_ACTIONS = {
     "/api/host/claude": ("start", ("path", "name")),
     "/api/host/stop": ("stop", ("id",)),
     "/api/host/reboot": ("reboot", ()),
+    "/api/host/update": ("update", ("container",)),
 }
 # Reachable without a session: the probe, what it takes to sign in, and the
 # Diun hook, which checks its own token.
