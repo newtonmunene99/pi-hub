@@ -132,14 +132,15 @@ After 5 wrong passwords in a row from one address, that address must wait a minu
 
 **Behind an authenticating proxy** (Authelia, Authentik, oauth2-proxy…), you can set `PIHUB_AUTH=off` to skip pi-hub's own sign-in. pi-hub then logs a warning, because anyone who can reach it directly can use it. If your proxy serves pi-hub over HTTPS, the session cookie still works; pi-hub can't tell, so it doesn't mark the cookie `Secure` itself.
 
-## Host actions: restart and Claude Code (optional)
+## Host actions: restart, Claude Code and container updates (optional)
 
 With the **host agent** running, a **Host** link appears in the header. It opens a panel where you can:
 
 - **Restart** the machine (tap twice to confirm).
 - **Start [Claude Code](https://claude.com/claude-code)** in any folder under your home directory. It runs `claude remote-control`, so you can carry on from the Claude mobile app or claude.ai/code without SSH. Sessions started here are listed with *Open* and *Stop* buttons.
+- **Update a container** that [Diun](#container-updates-diun) reports, from the sidebar.
 
-pi-hub usually runs in a container, which can't do either of these itself. The agent is a small part of pi-hub that runs **on the host, as your user**, and listens on a unix socket that you mount into the container. Without it, nothing changes.
+pi-hub usually runs in a container, which can't do any of these itself. The agent is a small part of pi-hub that runs **on the host, as your user**, and listens on a unix socket that you mount into the container. Without it, nothing changes.
 
 **1. Run the agent on the host** (Python 3.11+, from a checkout of this repo). Save this as `/etc/systemd/system/pihub-agent.service`, replacing `you` and the path:
 
@@ -181,6 +182,7 @@ The socket is only accessible to its owner and group, and the image runs as UID 
 
 - *Restart* runs `sudo -n systemctl reboot`, so your user needs passwordless sudo for that command, e.g. `you ALL=(root) NOPASSWD: /usr/bin/systemctl reboot` in `/etc/sudoers.d/pihub`.
 - *Claude Code* must be installed and signed in for your user. `claude remote-control` only starts in folders you have trusted: run `claude` once in a project folder and accept the prompt, and its subfolders are trusted too. Claude never saves trust for the home directory itself, so pick a folder inside it. Only one Remote Control session can serve a folder at a time. If Claude refuses to start, the panel shows its error.
+- *Container updates* run `docker compose`, so your user must be in the `docker` group, and the Docker CLI needs the Compose v2 plugin (`docker compose`; the old standalone `docker-compose` isn't used). Being in the `docker` group is equivalent to root on the host. Your user must also be able to read each stack's folder and compose files: a root-only `compose.yml` is refused with a message saying which file.
 
 | Agent variable | Default | |
 |---|---|---|
@@ -189,14 +191,17 @@ The socket is only accessible to its owner and group, and the image runs as UID 
 | `PIHUB_AGENT_STATE` | `~/.local/state/pihub` | session list and logs |
 | `PIHUB_AGENT_CLAUDE` | `claude` | Claude Code executable; empty turns sessions off |
 | `PIHUB_AGENT_REBOOT` | `sudo -n systemctl reboot` | reboot command; empty turns restart off |
+| `PIHUB_AGENT_DOCKER` | `docker` | Docker executable; empty turns container updates off |
 
-**Security:** the panel is only available after [signing in](#signing-in). With sign-in turned off (`PIHUB_AUTH=off`), anyone who can reach pi-hub can use these buttons, so keep it behind an authenticating proxy. `PIHUB_READONLY=1` turns host actions off. The endpoints only accept JSON, so another website can't trigger them from your browser. Sessions run under *your* Claude account, so only you can work in them, but anyone who can use the panel can start or stop them.
+**Security:** the panel is only available after [signing in](#signing-in). With sign-in turned off (`PIHUB_AUTH=off`), anyone who can reach pi-hub can use these buttons, so keep it behind an authenticating proxy. `PIHUB_READONLY=1` turns host actions off. The endpoints only accept JSON, so another website can't trigger them from your browser. Sessions run under *your* Claude account, so only you can work in them, but anyone who can use the panel can start or stop them. Anyone who can use pi-hub can also update (and so restart) any container Diun has reported.
 
 ## Container updates (Diun)
 
 pi-hub can show which of your containers have a newer image. It doesn't check registries itself: [Diun](https://crazymax.dev/diun/) does that, and tells pi-hub through a webhook. If Diun already sends you notifications (ntfy, email…), keep them; the webhook is just one more notifier.
 
 When Diun reports an update, pi-hub lists it under **Updates available** in the sidebar, with the image tag and a *Release notes* link. The matching service gets an **Update** badge, and its details popup says so too. After you've updated the container, dismiss the entry with **×**, or use **Clear all**. Entries stay until you dismiss them. A newer report for the same image replaces the old one.
+
+**Updating from the sidebar.** With the [host agent](#host-actions-restart-claude-code-and-container-updates-optional) running, each entry also has an **Update** button. Tap it twice to confirm. The agent runs `docker compose pull <service>`, then `docker compose up -d --no-deps <service>`, in the folder the container was started from, using the same compose files. Only that container is recreated. The button reads *Updating…* until it's finished, and then the entry disappears by itself; if it fails, the error shows under the entry. Updating pi-hub's own container works too: the page reconnects when it's back. Only containers started with Docker Compose can be updated this way; for others, the button explains why and you update them by hand.
 
 **1. Create a token** of at least 32 characters, and give it to pi-hub:
 
@@ -234,7 +239,7 @@ chmod 600 config/webhook-token
 Notes:
 
 - pi-hub keeps reports with Diun status `update`, meaning a new image for the tag a container runs. It ignores `new`, which Diun sends the first time it sees an image. To hear about new version tags for pinned images, see Diun's `diun.watch_repo` and `diun.include_tags` labels.
-- `/api/hooks/diun` is the only endpoint that changes data without [signing in](#signing-in). It needs the token instead, and can only add update entries. Dismissing needs a signed-in session and is off with `PIHUB_READONLY=1`.
+- `/api/hooks/diun` is the only endpoint that changes data without [signing in](#signing-in). It needs the token instead, and can only add update entries. Dismissing and updating need a signed-in session and are off with `PIHUB_READONLY=1`.
 - Up to 200 updates are kept in `updates.json` next to the config (`PIHUB_UPDATES` sets another path).
 
 ## Environment variables
