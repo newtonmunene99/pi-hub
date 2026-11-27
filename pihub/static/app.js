@@ -62,10 +62,11 @@ async function pollUpdates() {
 async function startUpdate(u) {
   updPosting.add(u.image); delete updJobErr[u.image]; render();
   const errs = [];
-  for (const c of u.containers) {
-    try { await hostApi('api/host/update', { container: c }); } catch (e) { if (e.auth) return; errs.push(prefixed(c, e.message)); }
-  }
-  updPosting.delete(u.image);
+  try {
+    for (const c of u.containers) {
+      try { await hostApi('api/host/update', { container: c }); } catch (e) { if (e.auth) return; errs.push(prefixed(c, e.message)); }
+    }
+  } finally { updPosting.delete(u.image); }  // also after a sign-out, so the button isn't stuck on Updating…
   if (errs.length) updJobErr[u.image] = errs;
   await pollUpdates();
 }
@@ -219,7 +220,8 @@ async function refresh() {
     const fresh = await r.json();
     if (!signedOut()) {  // a reply that lands after sign-out is dropped
       data = fresh;
-      if (data.hostAgent && !data.readonly && data.updates?.length && !sideHost) await loadSideHost();
+      // Reload while idle too: docker may be turned on later, or another tab may start a job.
+      if (data.hostAgent && !data.readonly && data.updates?.length && !updPoll) await loadSideHost();
       render();
       if (!updPoll && (data.updates || []).some(updRunning)) updPoll = setTimeout(pollUpdates, 2000);
     }
@@ -307,7 +309,7 @@ function showAuth(view) {
   $('#me').hidden = true;
   selected = null; renderModal(); closeHost();
   // Nothing from the last session stays on the page.
-  data = null; cfg = null;
+  data = null; cfg = null; sideHost = null;
   for (const id of ['#stats', '#pinned', '#cats', '#grid', '#side', '#rows', '#notices']) $(id).innerHTML = '';
   $('#editor').hidden = true;
   $('#title').textContent = document.title = 'pi-hub';
