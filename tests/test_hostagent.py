@@ -31,7 +31,7 @@ case "$1 $2" in
     case "$name" in
       locked) labels locked "$STACK/locked.yml" ;;
       radarr) labels radarr "$STACK/compose.yml,$STACK/override.yml" ;;
-      broken|slow) labels "$name" "$STACK/compose.yml" ;;
+      broken|slow|binary) labels "$name" "$STACK/compose.yml" ;;
       plain) echo '{"maintainer":"someone"}' ;;
       *) echo "Error: No such container: $name" >&2; exit 1 ;;
     esac ;;
@@ -39,6 +39,7 @@ case "$1 $2" in
     case "$*" in
       *"pull broken"*) echo "Pulling broken"; echo "Error response from daemon: manifest unknown" >&2; exit 1 ;;
       *"pull slow"*) sleep 2 ;;
+      *"pull binary"*) printf 'pull \\377\\376 failed\\n' >&2; exit 1 ;;
     esac ;;
 esac
 """
@@ -198,9 +199,9 @@ class UpdateTests(unittest.TestCase):
         """Waits up to 5 s for the container's job to leave ``state`` and returns it."""
         deadline = time.monotonic() + 5
         while time.monotonic() < deadline:
-            job = self.agent.jobs[name]
+            job = next(j for j in self.agent.update_jobs() if j["container"] == name)
             if job["state"] != state:
-                return dict(job)
+                return job
             time.sleep(0.05)
         self.fail(f"{name} still {state}")
 
@@ -231,6 +232,36 @@ class UpdateTests(unittest.TestCase):
         self.assertEqual(
             self.compose_calls(), [f"{self.stack}|compose -p broken -f {self.stack}/compose.yml pull broken"]
         )
+
+    def test_undecodable_output_still_ends_the_job(self):
+        self.agent.update("binary")
+        job = self.job("binary")
+        self.assertEqual(job["state"], "failed")
+        self.assertEqual(job["message"], "pull \ufffd\ufffd failed")
+
+    def test_timed_out_pull_fails_the_job(self):
+        with mock.patch("pihub.hostagent.UPDATE_TIMEOUT", 0.3):
+            self.agent.update("slow")
+            job = self.job("slow")
+        self.assertEqual((job["state"], job["message"]), ("failed", "docker compose pull timed out"))
+
+    def test_unexpected_error_still_ends_the_job(self):
+        with mock.patch("pihub.hostagent.subprocess.run", side_effect=[mock.DEFAULT, RuntimeError("boom")]) as run:
+            run.return_value = mock.Mock(
+                returncode=0,
+                stdout=json.dumps(
+                    {
+                        "com.docker.compose.project": "x",
+                        "com.docker.compose.project.working_dir": self.stack,
+                        "com.docker.compose.project.config_files": f"{self.stack}/compose.yml",
+                        "com.docker.compose.service": "x",
+                    }
+                ),
+                stderr="",
+            )
+            self.agent.update("x")
+            job = self.job("x")
+        self.assertEqual((job["state"], job["message"]), ("failed", "boom"))
 
     def test_refuses_second_update_while_running(self):
         self.agent.update("slow")

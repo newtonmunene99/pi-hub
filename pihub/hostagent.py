@@ -255,43 +255,58 @@ class Agent:
                 raise AgentError(f"{container} is already updating")
             job = {"container": container, "state": "running", "started": int(self.clock())}
             self.jobs[container] = job
+            started = dict(job)
         base = [self.docker or "docker", "compose", "-p", project]
         for f in files:
             base += ["-f", f]
         steps = [("pull", [*base, "pull", service]), ("up", [*base, "up", "-d", "--no-deps", service])]
         threading.Thread(target=self._run_update, args=(container, cwd, steps), daemon=True).start()
         logger.info("updating container %s (%s in %s)", container, service, cwd)
-        return dict(job)
+        return started
 
     def _run_update(self, container: str, cwd: str, steps: list[tuple[str, list[str]]]) -> None:
-        """Runs the compose steps in order, stopping at the first failure, and records the outcome."""
+        """Runs the compose steps in order, stopping at the first failure, and records the outcome.
+
+        The job always ends ``done`` or ``failed``, whatever goes wrong: a job stuck at
+        ``running`` would refuse every later update of that container until the agent restarts.
+        """
         message = ""
-        for step, argv in steps:
-            try:
-                done = subprocess.run(argv, cwd=cwd, capture_output=True, text=True, timeout=UPDATE_TIMEOUT)
-            except subprocess.TimeoutExpired:
-                message = f"docker compose {step} timed out"
-                break
-            except OSError as e:
-                message = str(e)
-                break
-            if done.returncode:
-                # Compose reports errors on stderr; fall back to stdout, then to the exit code.
-                lines = [ln.strip() for ln in done.stderr.splitlines() if ln.strip()]
-                lines = lines or [ln.strip() for ln in done.stdout.splitlines() if ln.strip()]
-                message = lines[-1] if lines else f"docker compose {step} exited with {done.returncode}"
-                break
-        with self.lock:
-            job = self.jobs[container]
-            job["finished"] = int(self.clock())
-            if message:
-                job.update(state="failed", message=message)
-            else:
-                job["state"] = "done"
+        try:
+            message = self._compose_steps(cwd, steps)
+        except Exception as e:  # anything unexpected still has to end the job
+            logger.exception("updating container %s crashed", container)
+            message = str(e) or type(e).__name__
+        finally:
+            with self.lock:
+                job = self.jobs[container]
+                job["finished"] = int(self.clock())
+                if message:
+                    job.update(state="failed", message=message)
+                else:
+                    job["state"] = "done"
         if message:
             logger.warning("updating container %s failed: %s", container, message)
         else:
             logger.info("updated container %s", container)
+
+    @staticmethod
+    def _compose_steps(cwd: str, steps: list[tuple[str, list[str]]]) -> str:
+        """Runs each step; returns "" on success, else why the first failing step failed."""
+        for step, argv in steps:
+            try:
+                done = subprocess.run(
+                    argv, cwd=cwd, capture_output=True, text=True, errors="replace", timeout=UPDATE_TIMEOUT
+                )
+            except subprocess.TimeoutExpired:
+                return f"docker compose {step} timed out"
+            except OSError as e:
+                return str(e)
+            if done.returncode:
+                # Compose reports errors on stderr; fall back to stdout, then to the exit code.
+                lines = [ln.strip() for ln in done.stderr.splitlines() if ln.strip()]
+                lines = lines or [ln.strip() for ln in done.stdout.splitlines() if ln.strip()]
+                return lines[-1] if lines else f"docker compose {step} exited with {done.returncode}"
+        return ""
 
     def _compose_target(self, name: str) -> tuple[str, str, list[str], str]:
         """Finds a container's Compose project, folder, files and service from its labels."""
