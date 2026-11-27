@@ -10,6 +10,7 @@ things:
   start    run ``claude remote-control`` in one of those folders
   stop     stop a session it started
   reboot   run PIHUB_AGENT_REBOOT (default ``sudo -n systemctl reboot``)
+  update   pull a container's new image and recreate it with Docker Compose
 
 The protocol is one JSON object per line in each direction, one request per connection.
 
@@ -19,6 +20,7 @@ Environment variables:
   PIHUB_AGENT_ROOT    folder browsing root             (default your home directory)
   PIHUB_AGENT_CLAUDE  claude executable, or "" to turn sessions off  (default claude)
   PIHUB_AGENT_REBOOT  reboot command, or "" to turn rebooting off    (default sudo -n systemctl reboot)
+  PIHUB_AGENT_DOCKER  docker executable, or "" to turn updates off   (default docker)
 """
 
 import contextlib
@@ -45,6 +47,14 @@ DEFAULT_SOCKET = "/run/pihub-agent/agent.sock"  # inside the systemd unit's Runt
 START_GRACE = 5.0  # seconds a new session gets to fail before it counts as started
 ANSI = re.compile(r"\x1b\[[0-9;?]*[A-Za-z]|\x1b\][^\x07]*\x07")
 SESSION_URL = re.compile(r"https://claude\.ai/code[^\s\x07\x1b]*")
+CONTAINER_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,127}")
+INSPECT_TIMEOUT = 10  # seconds; under the dashboard's socket timeout so a refusal reaches it
+COMPOSE_LABELS = (
+    "com.docker.compose.project",
+    "com.docker.compose.project.working_dir",
+    "com.docker.compose.project.config_files",
+    "com.docker.compose.service",
+)
 
 
 class AgentError(Exception):
@@ -60,13 +70,20 @@ class Agent:
     """The actions themselves, independent of the socket so they can be tested directly."""
 
     def __init__(
-        self, root: str, state_dir: str, claude: str = "claude", reboot: str = "", start_grace: float = START_GRACE
+        self,
+        root: str,
+        state_dir: str,
+        claude: str = "claude",
+        reboot: str = "",
+        start_grace: float = START_GRACE,
+        docker: str = "",
     ) -> None:
         self.start_grace = start_grace
         self.root = os.path.realpath(root)
         self.state_dir = state_dir
         self.claude = shutil.which(claude) if claude else None
         self.reboot_cmd = shlex.split(reboot)
+        self.docker = shutil.which(docker) if docker else None
         self.state_path = os.path.join(state_dir, "sessions.json")
         self.lock = threading.Lock()
         os.makedirs(state_dir, mode=0o700, exist_ok=True)
@@ -219,6 +236,40 @@ class Agent:
         if done.returncode:
             raise AgentError((done.stderr or done.stdout).strip() or f"Reboot command exited with {done.returncode}")
 
+    # ── container updates ──
+    def update(self, container: str) -> dict:
+        """Checks that a container can be updated with Docker Compose."""
+        self._compose_target(container)
+        raise AgentError("Container updates aren't implemented yet")
+
+    def _compose_target(self, name: str) -> tuple[str, str, list[str], str]:
+        """Finds a container's Compose project, folder, files and service from its labels."""
+        if not CONTAINER_NAME.fullmatch(name):
+            raise AgentError("Invalid container name")
+        if not self.docker:
+            raise AgentError("Container updates are turned off on the host")
+        argv = [self.docker, "container", "inspect", "--format", "{{json .Config.Labels}}", name]
+        try:
+            done = subprocess.run(argv, capture_output=True, text=True, timeout=INSPECT_TIMEOUT)
+        except (OSError, subprocess.TimeoutExpired) as e:
+            raise AgentError(f"docker inspect failed: {e}") from e
+        if done.returncode:
+            raise AgentError(f"No container named {name}")
+        try:
+            labels = json.loads(done.stdout) or {}
+        except ValueError:
+            labels = {}
+        if not isinstance(labels, dict) or not all(
+            labels.get(k) and isinstance(labels[k], str) for k in COMPOSE_LABELS
+        ):
+            raise AgentError(f"{name} wasn't started by Docker Compose; update it by hand")
+        project, cwd, files, service = (labels[k] for k in COMPOSE_LABELS)
+        paths = [f for f in files.split(",") if f]
+        for path in (cwd, *paths):
+            if not os.access(path, os.R_OK):
+                raise AgentError(f"{name}: can't read {path} on the host")
+        return project, cwd, paths, service
+
     # ── dispatch ──
     def status(self) -> dict:
         return {
@@ -244,6 +295,8 @@ class Agent:
             if action == "reboot":
                 self.reboot()
                 return {"ok": True}
+            if action == "update":
+                return {"job": self.update(str(req.get("container", "")))}
             raise AgentError("Unknown action")
         except AgentError as e:
             return {"error": str(e)}

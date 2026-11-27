@@ -5,6 +5,7 @@ import tempfile
 import threading
 import time
 import unittest
+from unittest import mock
 
 from pihub.hostagent import Agent, AgentClient, AgentError, serve
 
@@ -15,6 +16,31 @@ case "$PWD" in
 esac
 printf '\\033[1A\\033[JConnected\\nhttps://claude.ai/code/session_abc123?from=cli\\n'
 while :; do sleep 1; done
+"""
+
+FAKE_DOCKER = """#!/bin/sh
+printf '%s|%s\\n' "$PWD" "$*" >> "$FAKE_DOCKER_LOG"
+L='{"com.docker.compose.project":"%s",'
+L="$L"'"com.docker.compose.project.config_files":"%s",'
+L="$L"'"com.docker.compose.project.working_dir":"%s",'
+L="$L"'"com.docker.compose.service":"%s"}\\n'
+labels() { printf "$L" "$1" "$2" "$STACK" "$1"; }
+case "$1 $2" in
+  "container inspect")
+    name="$(eval echo \\${$#})"
+    case "$name" in
+      locked) labels locked "$STACK/locked.yml" ;;
+      radarr) labels radarr "$STACK/compose.yml,$STACK/override.yml" ;;
+      broken|slow) labels "$name" "$STACK/compose.yml" ;;
+      plain) echo '{"maintainer":"someone"}' ;;
+      *) echo "Error: No such container: $name" >&2; exit 1 ;;
+    esac ;;
+  compose*)
+    case "$*" in
+      *"pull broken"*) echo "Pulling broken"; echo "Error response from daemon: manifest unknown" >&2; exit 1 ;;
+      *"pull slow"*) sleep 2 ;;
+    esac ;;
+esac
 """
 
 
@@ -123,6 +149,55 @@ class AgentTests(unittest.TestCase):
         self.assertEqual([s["id"] for s in again.sessions()], [session["id"]])
         with open(again.state_path) as f:
             self.assertEqual(len(json.load(f)), 1)
+
+
+class UpdateTests(unittest.TestCase):
+    """Container updates through a fake ``docker`` that logs its argv and answers from canned labels."""
+
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.tmp = tmp.name
+        self.stack = os.path.join(self.tmp, "stack")
+        os.makedirs(self.stack)
+        for name in ("compose.yml", "override.yml", "locked.yml"):
+            open(os.path.join(self.stack, name), "w").close()
+        os.chmod(os.path.join(self.stack, "locked.yml"), 0)
+        self.log = os.path.join(self.tmp, "docker.log")
+        docker = os.path.join(self.tmp, "docker")
+        with open(docker, "w") as f:
+            f.write(FAKE_DOCKER)
+        os.chmod(docker, stat.S_IRWXU)
+        env = mock.patch.dict(os.environ, {"STACK": self.stack, "FAKE_DOCKER_LOG": self.log})
+        env.start()
+        self.addCleanup(env.stop)
+        self.agent = Agent(self.tmp, os.path.join(self.tmp, "state"), claude="", docker=docker)
+
+    def calls(self):
+        with open(self.log) as f:
+            return [line.rstrip("\n") for line in f]
+
+    def test_update_refusals(self):
+        for name in ("", "-rm", "a b", "x" * 129):
+            with self.subTest(name=name), self.assertRaisesRegex(AgentError, "^Invalid container name$"):
+                self.agent.update(name)
+        off = Agent(self.tmp, os.path.join(self.tmp, "state"), claude="", docker="")
+        with self.assertRaisesRegex(AgentError, "^Container updates are turned off on the host$"):
+            off.update("radarr")
+        with self.assertRaisesRegex(AgentError, "^No container named ghost$"):
+            self.agent.update("ghost")
+        self.assertEqual(self.calls(), [f"{os.getcwd()}|container inspect --format {{{{json .Config.Labels}}}} ghost"])
+        with self.assertRaisesRegex(AgentError, "^plain wasn't started by Docker Compose; update it by hand$"):
+            self.agent.update("plain")
+        if os.geteuid() != 0:  # root can read anything, so the check can't fail
+            with self.assertRaises(AgentError) as caught:
+                self.agent.update("locked")
+            self.assertEqual(str(caught.exception), f"locked: can't read {self.stack}/locked.yml on the host")
+
+    def test_handle_update_reports_refusal(self):
+        self.assertEqual(
+            self.agent.handle({"action": "update", "container": "ghost"}), {"error": "No container named ghost"}
+        )
 
 
 if __name__ == "__main__":
